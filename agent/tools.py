@@ -17,6 +17,7 @@ from langchain_core.tools import tool
 
 from agent.config import (BACKUP_DIR, PROJECT_ROOT, WORKSPACE, ALLOWED_ROOTS, allowed_root_for, display_path, safe_workspace_path)
 from agent.cpp_tools import CPP_TOOLS
+from agent.environment import preflight_program
 
 load_dotenv()
 
@@ -189,6 +190,10 @@ def execute(command):
 
     if executable not in ALLOWED_COMMANDS:
         return f"РљРѕРјР°РЅРґР° {executable} РЅРµ СЂР°Р·СЂРµС€РµРЅР°"
+
+    version_check = preflight_program(args[0])
+    if version_check and version_check.startswith("PRE-FLIGHT FAILED"):
+        return version_check
 
     if any(a.lower() in BLOCKED_FLAGS for a in args[1:]):
         return "РћРїР°СЃРЅС‹Р№ РїР°СЂР°РјРµС‚СЂ РєРѕРјР°РЅРґС‹ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅ"
