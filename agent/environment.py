@@ -343,7 +343,7 @@ def check_ollama_service(base_url: str, model: str | None = None) -> tuple[bool,
                 tags = json.loads(response.read(1_000_000).decode("utf-8", errors="replace"))
             available = {item.get("name", "") for item in tags.get("models", [])}
             if model not in available:
-                return True, message + f"; модель {model} не найдена в локальном списке моделей"
+                return False, message + f"; модель {model} не найдена в локальном списке моделей"
             message += f"; модель {model} установлена"
         except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
             message += f"; список моделей проверить не удалось: {exc}"
@@ -381,7 +381,7 @@ def check_environment_report(project_path: str = ".") -> str:
     )
     checks.append(VersionCheck(
         "Ollama HTTP service", os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
-        None, "OK" if ollama_ok else "UNAVAILABLE", ollama_message,
+        None, "OK" if ollama_ok else "NOT READY", ollama_message,
     ))
 
     lines = ["ПРОВЕРКА ОКРУЖЕНИЯ", f"Python runtime: {sys.version.split()[0]}",
