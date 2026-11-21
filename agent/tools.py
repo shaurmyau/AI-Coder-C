@@ -27,7 +27,7 @@ from agent.config import (
 
 
 ALLOWED_COMMANDS = {
-    "python", "python.exe", "py", "pytest",
+    "python", "python.exe", "py", "pytest", "pip", "pip.exe",
     "git", "git.exe",
     "node", "npm", "npx",
     "go", "dotnet", "cargo", "rustc",
@@ -38,7 +38,7 @@ ALLOWED_COMMANDS = {
     "vcpkg", "vcpkg.exe", "gdb", "gdb.exe", "where", "where.exe",
 }
 
-PYTHON_ALLOWED_MODULES = {"pytest", "unittest", "py_compile", "compileall"}
+PYTHON_ALLOWED_MODULES = {"pytest", "unittest", "py_compile", "compileall", "pip"}
 SHELL_OPERATOR_PATTERN = re.compile(r"[;&|<>\x60\r\n]")
 MAX_FILE_SIZE = 500_000
 MAX_TOOL_OUTPUT = 12_000
@@ -177,7 +177,7 @@ def check_environment() -> str:
     ]
 
     candidates = (
-        "git", "cmake", "ctest", "ninja", "g++", "gcc", "clang++",
+        "git", "cmake", "ctest", "ninja", "g++", "gcc", "clang++", "pip", "pytest",
         "cl", "msbuild", "gdb", "vcpkg",
     )
 
@@ -244,7 +244,10 @@ def execute(command: str) -> str:
     if executable not in ALLOWED_COMMANDS:
         return f"Команда {executable} не разрешена."
 
-    if executable in {"python", "python.exe", "py"}:
+    if executable in {"pip", "pip.exe"}:
+        args = [sys.executable, "-m", "pip", *args[1:]]
+
+    elif executable in {"python", "python.exe", "py"}:
         if len(args) < 2:
             return "Укажи Python-скрипт или разрешённый модуль через -m."
         if args[1] == "-m":
