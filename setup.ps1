@@ -3,16 +3,24 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = $PSScriptRoot
 Set-Location $ProjectRoot
 Write-Host "=== AI Coder: Python environment ===" -ForegroundColor Cyan
-$PythonCommand = Get-Command py -ErrorAction SilentlyContinue
-if ($PythonCommand) {
-    & py -3 -m venv .venv
-} else {
-    $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $PythonCommand) { throw "Python 3 is not installed or not in PATH." }
-    & python -m venv .venv
-}
-if ($LASTEXITCODE -ne 0) { throw "Could not create .venv." }
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$LegacyPython = Join-Path $ProjectRoot "venv\Scripts\python.exe"
+if (-not (Test-Path $Python) -and (Test-Path $LegacyPython)) {
+    $Python = $LegacyPython
+    Write-Host "Using existing venv environment."
+}
+if (-not (Test-Path $Python)) {
+    $PythonCommand = Get-Command py -ErrorAction SilentlyContinue
+    if ($PythonCommand) {
+        & py -3 -m venv .venv
+    } else {
+        $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $PythonCommand) { throw "Python 3 is not installed or not in PATH." }
+        & python -m venv .venv
+    }
+    if ($LASTEXITCODE -ne 0) { throw "Could not create .venv." }
+    $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+}
 & $Python -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed." }
 & $Python -m pip install -r requirements.txt
