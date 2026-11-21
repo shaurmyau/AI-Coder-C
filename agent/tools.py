@@ -14,6 +14,9 @@ from ddgs import DDGS
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 
+from agent.config import BACKUP_DIR, PROJECT_ROOT, WORKSPACE, safe_workspace_path
+from agent.cpp_tools import CPP_TOOLS
+
 load_dotenv()
 
 ROOT = Path(r"D:\AI-Coder").resolve()
@@ -24,7 +27,7 @@ ALLOWED_COMMANDS = {
     "python", "python.exe", "py", "pytest", "pip", "pip.exe",
     "git", "git.exe", "node", "npm", "npx",
     "go", "dotnet", "cargo", "rustc",
-    "docker", "uv", "cmake", "gcc", "clang"
+    "docker", "uv", "cmake", "gcc", "clang", "cl", "cl.exe", "ctest", "vcpkg", "vcpkg.exe", "msbuild", "ninja"
 }
 
 BLOCKED_FLAGS = {
@@ -324,5 +327,6 @@ TOOLS = [
     run_command,
     run_tests,
     web_search,
-    fetch_webpage
+    fetch_webpage,
+    *CPP_TOOLS
 ]
