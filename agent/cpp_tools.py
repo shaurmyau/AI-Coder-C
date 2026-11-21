@@ -179,6 +179,7 @@ def configure_cpp_project(project_path: str = ".", build_type: str = "Debug") ->
             return "CMake не найден в PATH."
         build = project / "build"
         args = [cmake, "-S", str(project), "-B", str(build),
+                f"-DCMAKE_BUILD_TYPE={build_type}",
                 "-DCMAKE_CXX_STANDARD=20", "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
         if VCPKG_TOOLCHAIN.is_file():
             args += [f"-DCMAKE_TOOLCHAIN_FILE={VCPKG_TOOLCHAIN}",
