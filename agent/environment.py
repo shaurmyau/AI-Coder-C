@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -278,6 +280,31 @@ def _vcpkg_package_versions(project: Path | None) -> list[VersionCheck]:
     return checks
 
 
+
+def check_ollama_service(base_url: str, model: str | None = None) -> tuple[bool, str]:
+    """Check the local Ollama HTTP service and optionally verify a model is present."""
+    base = base_url.rstrip("/")
+    try:
+        with urllib.request.urlopen(base + "/api/version", timeout=4) as response:
+            payload = json.loads(response.read(256_000).decode("utf-8", errors="replace"))
+        version = payload.get("version", "версия не сообщена")
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+        return False, f"Ollama API недоступен по адресу {base}: {exc}"
+
+    message = f"Ollama service доступен, версия сервера: {version}"
+    if model:
+        try:
+            with urllib.request.urlopen(base + "/api/tags", timeout=5) as response:
+                tags = json.loads(response.read(1_000_000).decode("utf-8", errors="replace"))
+            available = {item.get("name", "") for item in tags.get("models", [])}
+            if model not in available:
+                return True, message + f"; модель {model} не найдена в локальном списке моделей"
+            message += f"; модель {model} установлена"
+        except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError) as exc:
+            message += f"; список моделей проверить не удалось: {exc}"
+    return True, message
+
+
 def check_environment_report(project_path: str = ".") -> str:
     """Return detected versions of development tools and project dependencies."""
     project: Path | None = None
@@ -302,6 +329,15 @@ def check_environment_report(project_path: str = ".") -> str:
                 "SFML", None, None, "UNKNOWN",
                 "Версия не найдена в стандартном vcpkg triplet; фактический поиск выполнит CMake",
             ))
+
+    ollama_ok, ollama_message = check_ollama_service(
+        os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        os.environ.get("OLLAMA_MODEL"),
+    )
+    checks.append(VersionCheck(
+        "Ollama HTTP service", os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"),
+        None, "OK" if ollama_ok else "UNAVAILABLE", ollama_message,
+    ))
 
     lines = ["ПРОВЕРКА ОКРУЖЕНИЯ", f"Python runtime: {sys.version.split()[0]}",
              f"Платформа: {sys.platform}", ""]
