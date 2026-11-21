@@ -1,7 +1,7 @@
 ﻿$ErrorActionPreference = "Stop"
-Set-Location "D:\AI-Coder"
+Set-Location "D:\AI-Coder-C++"
 
-$PYTHON = "D:\AI-Coder\venv\Scripts\python.exe"
+$PYTHON = "D:\AI-Coder-C++\venv\Scripts\python.exe"
 
 if (-not (Test-Path $PYTHON)) {
     throw "Виртуальное окружение не найдено. Сначала запусти setup.ps1"

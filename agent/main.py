@@ -11,7 +11,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from agent.tools import TOOLS
 from agent.prompts import SYSTEM_PROMPT
 
-ROOT = Path(r"D:\AI-Coder")
+ROOT = Path(r"D:\AI-Coder-C++")
 load_dotenv(ROOT / ".env")
 
 os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
