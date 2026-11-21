@@ -1,0 +1,45 @@
+﻿# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Databases and memory
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+build/
+dist/
+out/
+*.obj
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+
+# vcpkg
+tools/vcpkg/
+vcpkg_installed/
+
+# IDE
+.vscode/
+.idea/
+.vs/
+
+# Temporary
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

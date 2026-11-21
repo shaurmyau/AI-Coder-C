@@ -1,0 +1,9 @@
+﻿langchain
+langchain-ollama
+langgraph
+langgraph-checkpoint-sqlite
+ddgs
+requests
+beautifulsoup4
+python-dotenv
+pytest
