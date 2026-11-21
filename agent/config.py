@@ -77,9 +77,20 @@ def allowed_root_for(path: str | Path) -> Path:
 
 def safe_workspace_path(relative_path: str | Path) -> Path:
     """Resolve a workspace-relative or allow-listed absolute project path."""
-    candidate = Path(relative_path).expanduser()
+    raw = str(relative_path).strip().strip('"').strip("'")
+    if not raw:
+        raise ValueError("Путь к проекту не может быть пустым.")
+
+    candidate = Path(raw).expanduser()
     if not candidate.is_absolute():
-        candidate = WORKSPACE / candidate
+        # Accept both "rougeLikeGame" (relative to WORKSPACE) and
+        # "workspace/rougeLikeGame" (relative to PROJECT_ROOT).
+        parts = candidate.parts
+        if parts and os.path.normcase(parts[0]) == os.path.normcase(WORKSPACE.name):
+            candidate = PROJECT_ROOT / candidate
+        else:
+            candidate = WORKSPACE / candidate
+
     resolved = candidate.resolve()
     allowed_root_for(resolved)
     return resolved
