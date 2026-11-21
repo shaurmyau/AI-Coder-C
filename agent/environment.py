@@ -195,9 +195,86 @@ def _python_package_versions(project: Path | None) -> list[VersionCheck]:
             installed = importlib.metadata.version(package)
             status = "OK"
             details = f"Требование: {constraint or 'любая версия'}"
+            if constraint:
+                try:
+                    from packaging.requirements import Requirement
+                    requirement = Requirement(line)
+                    if requirement.specifier and installed not in requirement.specifier:
+                        status = "VERSION MISMATCH"
+                        details = f"Установлена {installed}; требуется {requirement.specifier}"
+                except (ImportError, ValueError):
+                    details += " (автоматическое сравнение ограничения недоступно)"
         except importlib.metadata.PackageNotFoundError:
             installed, status, details = None, "NOT INSTALLED", "Пакет отсутствует в текущем Python"
         checks.append(VersionCheck(f"Python package {package}", sys.executable, installed, status, details))
+    return checks
+
+
+def _npm_package_versions(project: Path | None) -> list[VersionCheck]:
+    checks: list[VersionCheck] = []
+    if project is None:
+        return checks
+    manifest = project / "package.json"
+    if not manifest.is_file():
+        return checks
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [VersionCheck("npm dependencies", None, None, "ERROR", "package.json не читается")]
+
+    for name, required in {
+        **data.get("dependencies", {}),
+        **data.get("devDependencies", {}),
+    }.items():
+        package_file = project / "node_modules" / name / "package.json"
+        try:
+            installed = json.loads(package_file.read_text(encoding="utf-8")).get("version")
+            status = "OK"
+            details = f"Требуется: {required}"
+        except (OSError, json.JSONDecodeError):
+            installed, status, details = None, "NOT INSTALLED", f"Требуется: {required}"
+        checks.append(VersionCheck(f"npm package {name}", str(package_file), installed, status, details))
+    return checks
+
+
+def _vcpkg_package_versions(project: Path | None) -> list[VersionCheck]:
+    checks: list[VersionCheck] = []
+    if project is None:
+        return checks
+    manifest = project / "vcpkg.json"
+    if not manifest.is_file():
+        return checks
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [VersionCheck("vcpkg dependencies", None, None, "ERROR", "vcpkg.json не читается")]
+
+    vcpkg = VCPKG_ROOT / ("vcpkg.exe" if os.name == "nt" else "vcpkg")
+    if not vcpkg.is_file():
+        return [VersionCheck("vcpkg dependencies", str(vcpkg), None, "UNKNOWN", "vcpkg executable не найден")]
+    try:
+        result = subprocess.run(
+            [str(vcpkg), "list"], cwd=str(project), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60, shell=False, check=False,
+        )
+        installed_lines = result.stdout.splitlines() if result.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):
+        installed_lines = []
+    installed = {}
+    for line in installed_lines:
+        match = re.match(r"([A-Za-z0-9_.+-]+):([A-Za-z0-9_-]+)s+([^s]+)", line)
+        if match:
+            installed[match.group(1).lower()] = match.group(3)
+    for dependency in data.get("dependencies", []):
+        name = dependency if isinstance(dependency, str) else dependency.get("name", "")
+        if not name:
+            continue
+        version = installed.get(name.lower())
+        checks.append(VersionCheck(
+            f"vcpkg package {name}", str(vcpkg), version,
+            "OK" if version else "NOT INSTALLED",
+            "Найден в установленном triplet" if version else "Пакет не найден в выводе vcpkg list",
+        ))
     return checks
 
 
@@ -213,6 +290,8 @@ def check_environment_report(project_path: str = ".") -> str:
 
     checks = _check_programs()
     checks.extend(_python_package_versions(project))
+    checks.extend(_npm_package_versions(project))
+    checks.extend(_vcpkg_package_versions(project))
     sfml = _installed_sfml_version()
     if sfml:
         checks.append(VersionCheck("SFML (vcpkg x64-windows)", str(VCPKG_ROOT), sfml, "OK"))
