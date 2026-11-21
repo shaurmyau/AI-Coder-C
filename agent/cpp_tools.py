@@ -13,7 +13,7 @@ from typing import Sequence
 from langchain_core.tools import tool
 
 from agent.config import VCPKG_ROOT, VCPKG_TOOLCHAIN, safe_workspace_path
-from agent.environment import check_environment_report, preflight_cpp_project, preflight_program
+from agent.environment import check_environment_report, find_program_path, preflight_cpp_project, preflight_program, _visual_studio_installation
 
 
 def _confirm(label: str) -> bool:
@@ -33,40 +33,175 @@ def _project_dir(relative_path: str) -> Path:
 
 
 def _msvc_environment() -> dict[str, str]:
+    """Load a clean Visual Studio x64 compiler environment."""
     env = os.environ.copy()
-    if os.name != "nt" or shutil.which("cl.exe", path=env.get("PATH")):
+
+    if os.name != "nt":
         return env
 
-    pf = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
-    vswhere = pf / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-    if not vswhere.is_file():
-        raise RuntimeError("MSVC не найден. Запусти агента из Visual Studio Developer PowerShell.")
+    expected_cl = find_program_path("MSVC")
 
-    found = subprocess.run(
-        [str(vswhere), "-latest", "-products", "*", "-requires",
-         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30
-    )
-    paths = found.stdout.strip().splitlines()
-    if found.returncode or not paths:
-        raise RuntimeError("Не удалось найти Visual Studio с компонентом MSVC.")
+    if not expected_cl:
+        raise RuntimeError(
+            "Не удалось обнаружить MSVC x64 через Visual Studio."
+        )
 
-    dev_cmd = Path(paths[0]) / "Common7" / "Tools" / "VsDevCmd.bat"
-    command = f'call "{dev_cmd}" -arch=amd64 -host_arch=amd64 >nul && set'
-    result = subprocess.run(
-        ["cmd.exe", "/d", "/c", command],
-        capture_output=True, text=True, encoding="mbcs", errors="replace", timeout=60
+    expected_cl = str(Path(expected_cl).resolve())
+    expected_norm = os.path.normcase(os.path.abspath(expected_cl))
+
+    current_cl = shutil.which("cl.exe", path=env.get("PATH", ""))
+
+    # Reuse the environment only when the exact x64 compiler is already
+    # active and the compiler include/library paths are available.
+    if (
+        current_cl
+        and os.path.normcase(os.path.abspath(current_cl)) == expected_norm
+        and env.get("INCLUDE")
+        and env.get("LIB")
+    ):
+        return env
+
+    installation = _visual_studio_installation()
+
+    if not installation:
+        raise RuntimeError(
+            "MSVC не найден. Не удалось определить установку Visual Studio."
+        )
+
+    dev_cmd = installation / "Common7" / "Tools" / "VsDevCmd.bat"
+
+    if not dev_cmd.is_file():
+        raise RuntimeError(
+            f"Не найден VsDevCmd.bat: {dev_cmd}"
+        )
+
+    # The command line form is important: cmd.exe must receive the
+    # nested quotes around the batch-file path as one command.
+    command_line = (
+        f'cmd.exe /d /c ""{dev_cmd}" '
+        '-arch=amd64 -host_arch=amd64 >nul && set"'
     )
-    if result.returncode:
-        raise RuntimeError("Не удалось загрузить окружение MSVC:\n" + result.stderr[-4000:])
+
+    try:
+        result = subprocess.run(
+            command_line,
+            capture_output=True,
+            text=True,
+            encoding="mbcs",
+            errors="replace",
+            timeout=90,
+            shell=False,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"Не удалось запустить VsDevCmd.bat: {exc}"
+        ) from exc
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Не удалось загрузить окружение MSVC:\n"
+            + result.stderr[-4000:]
+            + "\n"
+            + result.stdout[-2000:]
+        )
+
+    loaded = env.copy()
+
+    # Windows environment variable names are case-insensitive.
+    # A normal Python dict is case-sensitive, so merge names explicitly.
     for line in result.stdout.splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            if key:
-                env[key] = value
-    if not shutil.which("cl.exe", path=env.get("PATH")):
-        raise RuntimeError("cl.exe не появился в PATH после загрузки VsDevCmd.")
-    return env
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+
+        if not key or key.startswith("="):
+            continue
+
+        existing_key = next(
+            (
+                existing
+                for existing in loaded
+                if existing.casefold() == key.casefold()
+            ),
+            None,
+        )
+
+        if existing_key is not None:
+            del loaded[existing_key]
+
+        canonical_key = (
+            key.upper()
+            if key.upper() in {"PATH", "INCLUDE", "LIB", "LIBPATH"}
+            else key
+        )
+
+        loaded[canonical_key] = value
+
+    # Put the exact Hostx64/x64 compiler directory first in PATH.
+    # This avoids selecting an inherited HostX86/x86 compiler.
+    compiler_dir = str(Path(expected_cl).parent)
+    existing_path = loaded.get("PATH", "")
+
+    ordered_entries = [compiler_dir]
+    compiler_dir_norm = os.path.normcase(
+        os.path.abspath(compiler_dir)
+    )
+
+    for entry in existing_path.split(os.pathsep):
+        entry = entry.strip()
+
+        if not entry:
+            continue
+
+        entry_norm = os.path.normcase(os.path.abspath(entry))
+
+        if entry_norm != compiler_dir_norm:
+            ordered_entries.append(entry)
+
+    loaded["PATH"] = os.pathsep.join(ordered_entries)
+
+    resolved_cl = shutil.which(
+        "cl.exe",
+        path=loaded["PATH"],
+    )
+
+    if not resolved_cl:
+        raise RuntimeError(
+            "cl.exe не найден после загрузки окружения Visual Studio."
+        )
+
+    resolved_norm = os.path.normcase(os.path.abspath(resolved_cl))
+
+    if resolved_norm != expected_norm:
+        raise RuntimeError(
+            "Выбран неправильный компилятор MSVC.\n"
+            f"Ожидался: {expected_cl}\n"
+            f"Получен:  {resolved_cl}"
+        )
+
+    if not loaded.get("INCLUDE"):
+        raise RuntimeError(
+            "VsDevCmd не сформировал переменную INCLUDE."
+        )
+
+    if not loaded.get("LIB"):
+        raise RuntimeError(
+            "VsDevCmd не сформировал переменную LIB."
+        )
+
+    if loaded.get("VSCMD_ARG_HOST_ARCH", "").lower() != "x64":
+        raise RuntimeError(
+            "Visual Studio не подтвердила HOST ARCH x64."
+        )
+
+    if loaded.get("VSCMD_ARG_TGT_ARCH", "").lower() != "x64":
+        raise RuntimeError(
+            "Visual Studio не подтвердила TARGET ARCH x64."
+        )
+
+    return loaded
 
 
 def _run(args: Sequence[str], cwd: Path, timeout: int = 900) -> str:
@@ -178,7 +313,7 @@ def configure_cpp_project(project_path: str = ".", build_type: str = "Debug") ->
             return preflight
         if build_type not in {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}:
             return "build_type должен быть Debug, Release, RelWithDebInfo или MinSizeRel."
-        cmake = shutil.which("cmake")
+        cmake = find_program_path("CMake")
         if not cmake:
             return "CMake не найден в PATH."
         build = project / "build"
@@ -206,7 +341,7 @@ def build_cpp_project(project_path: str = ".", build_type: str = "Debug") -> str
             return preflight
         if build_type not in {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}:
             return "Недопустимый build_type."
-        cmake = shutil.which("cmake")
+        cmake = find_program_path("CMake")
         if not cmake:
             return "CMake не найден."
         return _run([cmake, "--build", str(build), "--config", build_type, "--parallel"],
@@ -229,7 +364,7 @@ def run_cpp_tests(project_path: str = ".", build_type: str = "Debug") -> str:
         ctest_check = preflight_program("ctest")
         if ctest_check and ctest_check.startswith("PRE-FLIGHT FAILED"):
             return ctest_check
-        ctest = shutil.which("ctest")
+        ctest = find_program_path("CTest")
         if not ctest:
             return "CTest не найден."
         return _run([ctest, "--test-dir", str(build), "-C", build_type,

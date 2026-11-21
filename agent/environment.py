@@ -184,13 +184,172 @@ def _project_requirements(project: Path) -> list[str]:
     return requirements
 
 
+
+
+def _visual_studio_installation() -> Path | None:
+    """Find the latest Visual Studio installation containing MSVC."""
+    if os.name != "nt":
+        return None
+
+    root = Path(
+        os.environ.get(
+            "ProgramFiles(x86)",
+            r"C:\Program Files (x86)",
+        )
+    )
+
+    vswhere = (
+        root
+        / "Microsoft Visual Studio"
+        / "Installer"
+        / "vswhere.exe"
+    )
+
+    if not vswhere.is_file():
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            shell=False,
+            check=False,
+        )
+
+        if result.returncode != 0:
+            return None
+
+        paths = [
+            line.strip()
+            for line in result.stdout.splitlines()
+            if line.strip()
+        ]
+
+        if not paths:
+            return None
+
+        installation = Path(paths[0])
+
+        return installation if installation.is_dir() else None
+
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def find_program_path(name: str) -> str | None:
+    """
+    Resolve a development tool.
+
+    First checks PATH, then uses known Visual Studio installation
+    locations when the tool is not available in PATH.
+
+    For MSVC, prefers the x64-targeting compiler.
+    """
+    if name not in PROGRAMS:
+        return shutil.which(name)
+
+    executable = PROGRAMS[name][0]
+    path = shutil.which(executable)
+
+    # For MSVC, prefer Hostx64/x64 even if PATH contains Hostx86/x86.
+    if name == "MSVC" and os.name == "nt":
+        installation = _visual_studio_installation()
+
+        if installation:
+            tools_dir = installation / "VC" / "Tools" / "MSVC"
+
+            candidates = list(
+                tools_dir.glob("*/bin/Hostx64/x64/cl.exe")
+            )
+
+            def version_key(candidate: Path) -> tuple[int, ...]:
+                version_dir = candidate.parents[3].name
+                return tuple(
+                    int(part)
+                    for part in re.findall(r"\d+", version_dir)
+                )
+
+            if candidates:
+                candidates.sort(key=version_key)
+                return str(candidates[-1])
+
+        return path
+
+    # A valid PATH result takes precedence for other programs.
+    if path:
+        return path
+
+    if name == "vcpkg":
+        local_vcpkg = VCPKG_ROOT / (
+            "vcpkg.exe" if os.name == "nt" else "vcpkg"
+        )
+
+        if local_vcpkg.is_file():
+            return str(local_vcpkg)
+
+    if os.name == "nt":
+        installation = _visual_studio_installation()
+
+        if installation:
+            visual_studio_paths = {
+                "CMake": (
+                    "Common7/IDE/CommonExtensions/Microsoft/CMake/"
+                    "CMake/bin/cmake.exe"
+                ),
+                "CTest": (
+                    "Common7/IDE/CommonExtensions/Microsoft/CMake/"
+                    "CMake/bin/ctest.exe"
+                ),
+                "Ninja": (
+                    "Common7/IDE/CommonExtensions/Microsoft/CMake/"
+                    "Ninja/ninja.exe"
+                ),
+                "MSBuild": (
+                    "MSBuild/Current/Bin/amd64/MSBuild.exe"
+                ),
+            }
+
+            relative_path = visual_studio_paths.get(name)
+
+            if relative_path:
+                candidate = installation / relative_path
+
+                if candidate.is_file():
+                    return str(candidate)
+
+        if name == ".NET SDK":
+            dotnet = (
+                Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+                / "dotnet"
+                / "dotnet.exe"
+            )
+
+            if dotnet.is_file():
+                return str(dotnet)
+
+    return None
+
+
 def _check_programs(names: Sequence[str] | None = None) -> list[VersionCheck]:
     selected = set(names or PROGRAMS)
     results: list[VersionCheck] = []
     for name, (executable, *args) in PROGRAMS.items():
         if name not in selected:
             continue
-        path = shutil.which(executable)
+        path = find_program_path(name)
         if not path and name == "vcpkg":
             local_vcpkg = VCPKG_ROOT / ("vcpkg.exe" if os.name == "nt" else "vcpkg")
             if local_vcpkg.is_file():
@@ -215,7 +374,68 @@ def _check_programs(names: Sequence[str] | None = None) -> list[VersionCheck]:
         if not path:
             results.append(VersionCheck(name, None, None, "NOT FOUND", "Не найден в PATH или стандартном каталоге установки"))
             continue
-        output, error = _run_version_path(path, args) if Path(path).is_file() else _run_version(executable, args)
+        if name == ".NET SDK":
+            output, error = _run_version_path(path, ("--list-sdks",))
+
+            if error:
+                results.append(
+                    VersionCheck(name, path, None, "ERROR", error)
+                )
+                continue
+
+            sdk_lines = [
+                line.strip()
+                for line in (output or "").splitlines()
+                if line.strip()
+            ]
+
+            if not sdk_lines:
+                runtime_output, _ = _run_version_path(path, ("--list-runtimes"))
+                runtime_lines = [
+                    line.strip()
+                    for line in (runtime_output or "").splitlines()
+                    if line.strip()
+                ]
+
+                runtime_info = (
+                    "; установленные Runtime: " + ", ".join(runtime_lines[:5])
+                    if runtime_lines
+                    else "; Runtime также не обнаружен"
+                )
+
+                results.append(
+                    VersionCheck(
+                        name,
+                        path,
+                        None,
+                        "NOT INSTALLED",
+                        "dotnet.exe найден, но .NET SDK отсутствует" + runtime_info,
+                    )
+                )
+                continue
+
+            versions = []
+            for line in sdk_lines:
+                match = _VERSION_RE.search(line)
+                if match:
+                    versions.append(match.group(1))
+
+            results.append(
+                VersionCheck(
+                    name,
+                    path,
+                    versions[-1] if versions else sdk_lines[-1],
+                    "OK",
+                    "Установленные SDK: " + ", ".join(sdk_lines[:10]),
+                )
+            )
+            continue
+
+        output, error = (
+            _run_version_path(path, args)
+            if Path(path).is_file()
+            else _run_version(executable, args)
+        )
         if error:
             results.append(VersionCheck(name, path, None, "ERROR", error))
             continue
@@ -412,34 +632,104 @@ def check_environment_report(project_path: str = ".") -> str:
     return "\n".join(lines)
 
 
+
 def preflight_program(executable: str) -> str | None:
-    """Check that a command exists and can report its version before execution."""
+    """Check that a command exists and can report its version."""
     key = Path(executable).name.lower()
+
     aliases = {
-        "python.exe": "Python", "python": "Python", "py.exe": "Python", "py": "Python",
-        "pip.exe": "Pip", "pip": "Pip", "pytest.exe": "pytest", "pytest": "pytest",
-        "git.exe": "Git", "git": "Git", "cmake.exe": "CMake", "cmake": "CMake",
-        "ctest.exe": "CTest", "ctest": "CTest", "ninja.exe": "Ninja", "ninja": "Ninja",
-        "node.exe": "Node.js", "node": "Node.js", "npm.cmd": "npm", "npm": "npm",
-        "go.exe": "Go", "go": "Go", "dotnet.exe": ".NET SDK", "dotnet": ".NET SDK",
-        "rustc.exe": "Rust", "rustc": "Rust", "cargo.exe": "Cargo", "cargo": "Cargo",
-        "docker.exe": "Docker", "docker": "Docker", "ollama.exe": "Ollama", "ollama": "Ollama",
-        "vcpkg.exe": "vcpkg", "vcpkg": "vcpkg", "cl.exe": "MSVC", "cl": "MSVC",
+        "python.exe": "Python", "python": "Python",
+        "py.exe": "Python", "py": "Python",
+        "pip.exe": "Pip", "pip": "Pip",
+        "pytest.exe": "pytest", "pytest": "pytest",
+        "git.exe": "Git", "git": "Git",
+        "cmake.exe": "CMake", "cmake": "CMake",
+        "ctest.exe": "CTest", "ctest": "CTest",
+        "ninja.exe": "Ninja", "ninja": "Ninja",
+        "node.exe": "Node.js", "node": "Node.js",
+        "npm.cmd": "npm", "npm": "npm",
+        "go.exe": "Go", "go": "Go",
+        "dotnet.exe": ".NET SDK", "dotnet": ".NET SDK",
+        "rustc.exe": "Rust", "rustc": "Rust",
+        "cargo.exe": "Cargo", "cargo": "Cargo",
+        "docker.exe": "Docker", "docker": "Docker",
+        "ollama.exe": "Ollama", "ollama": "Ollama",
+        "vcpkg.exe": "vcpkg", "vcpkg": "vcpkg",
+        "cl.exe": "MSVC", "cl": "MSVC",
         "msbuild.exe": "MSBuild", "msbuild": "MSBuild",
-        "gcc.exe": "GCC", "gcc": "GCC", "clang.exe": "Clang", "clang": "Clang",
+        "gcc.exe": "GCC", "gcc": "GCC",
+        "clang.exe": "Clang", "clang": "Clang",
     }
+
     name = aliases.get(key)
+
     if not name:
         return None
+
     executable_name, *args = PROGRAMS[name]
-    output, error = _run_version(executable_name, args)
+    path = find_program_path(name)
+
+    if not path:
+        return (
+            f"PRE-FLIGHT FAILED: {name}: "
+            "программа не найдена. Команда не запущена."
+        )
+
+    # Check the SDK itself, not merely the .NET Runtime.
+    if name == ".NET SDK":
+        output, error = _run_version_path(
+            path,
+            ("--list-sdks",),
+        )
+
+        if error:
+            return (
+                f"PRE-FLIGHT FAILED: .NET SDK: {error}. "
+                "Команда не запущена."
+            )
+
+        sdk_lines = [
+            line.strip()
+            for line in (output or "").splitlines()
+            if line.strip()
+        ]
+
+        if not sdk_lines:
+            return (
+                "PRE-FLIGHT FAILED: dotnet.exe найден, "
+                "но установленные .NET SDK не обнаружены."
+            )
+
+        versions = []
+
+        for line in sdk_lines:
+            match = _VERSION_RE.search(line)
+
+            if match:
+                versions.append(match.group(1))
+
+        version = versions[-1] if versions else sdk_lines[-1]
+
+        return f"PRE-FLIGHT OK: .NET SDK {version}"
+
+    output, error = _run_version_path(path, args)
+
     if error:
-        return f"PRE-FLIGHT FAILED: {name}: {error}. Команда не запущена."
+        return (
+            f"PRE-FLIGHT FAILED: {name}: {error}. "
+            "Команда не запущена."
+        )
+
     match = _VERSION_RE.search(output or "")
-    version = match.group(1) if match else (output or "").splitlines()[0]
+    version = (
+        match.group(1)
+        if match
+        else (output or "").splitlines()[0][:100]
+        if output
+        else "версия не определена"
+    )
+
     return f"PRE-FLIGHT OK: {name} {version}"
-
-
 
 def preflight_python_module(python_executable: str, module: str) -> str | None:
     """Verify a Python module can be invoked before using python -m."""
@@ -451,64 +741,73 @@ def preflight_python_module(python_executable: str, module: str) -> str | None:
     return f"PRE-FLIGHT OK: Python module {module} {version}"
 
 
+
 def preflight_cpp_project(project: Path, stage: str) -> str | None:
-    """Validate the toolchain before CMake configure/build/test stages."""
-    cmake_path = shutil.which("cmake")
+    """Validate CMake and the C++ compiler before project operations."""
+    cmake_path = find_program_path("CMake")
+
     if not cmake_path:
-        return "PRE-FLIGHT FAILED: CMake не найден в PATH. Этап остановлен."
-
-    output, error = _run_version("cmake", ("--version",))
-    if error:
-        return f"PRE-FLIGHT FAILED: не удалось определить версию CMake: {error}"
-
-    if os.name == "nt" and not shutil.which("cl.exe"):
-        vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
-        installed = False
-        if vswhere.is_file():
-            try:
-                probe = subprocess.run(
-                    [str(vswhere), "-latest", "-products", "*", "-requires",
-                     "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
-                    capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=20, shell=False, check=False,
-                )
-                installed = probe.returncode == 0 and bool(probe.stdout.strip())
-            except (OSError, subprocess.TimeoutExpired):
-                installed = False
-        if not installed:
-            return (
-                "PRE-FLIGHT FAILED: MSVC x64 не найден (нет cl.exe и установленного компонента "
-                "Visual Studio C++ Build Tools). Этап " + stage + " остановлен."
-            )
-
-    cmake_file = project / "CMakeLists.txt"
-    if not cmake_file.is_file():
-        return "PRE-FLIGHT FAILED: CMakeLists.txt не найден."
-
-    text = cmake_file.read_text(encoding="utf-8", errors="replace")
-    sfml_match = re.search(
-        r"find_package\s*\(\s*SFML\s*(\d+(?:\.\d+){0,3})?",
-        text,
-        re.IGNORECASE,
-    )
-    sfml_installed = _installed_sfml_version()
-    if sfml_match and sfml_match.group(1) and sfml_installed:
-        required = _version_tuple(sfml_match.group(1))
-        installed = _version_tuple(sfml_installed)
-        if required and installed and tuple((list(installed) + [0] * 4)[:4]) < tuple((list(required) + [0] * 4)[:4]):
-            return (
-                f"PRE-FLIGHT FAILED: проект требует SFML >= {sfml_match.group(1)}, "
-                f"а в vcpkg обнаружена SFML {sfml_installed}. Этап {stage} остановлен."
-            )
-
-    cmake_version = _VERSION_RE.search(output or "")
-    compiler = shutil.which("cl.exe") or shutil.which("c++") or shutil.which("g++")
-    details = f"CMake {cmake_version.group(1) if cmake_version else 'version detected'}"
-    if compiler:
-        details += f"; compiler: {compiler}"
-    if sfml_match:
-        details += (
-            f"; SFML requirement: {sfml_match.group(1) or 'unspecified'}"
-            + (f", installed: {sfml_installed}" if sfml_installed else ", resolution delegated to CMake")
+        return (
+            f"PRE-FLIGHT FAILED ({stage}): "
+            "CMake не найден. Этап остановлен."
         )
-    return f"PRE-FLIGHT OK ({stage}): {details}"
+
+    if not Path(cmake_path).is_file():
+        return (
+            f"PRE-FLIGHT FAILED ({stage}): "
+            f"файл CMake не существует: {cmake_path}"
+        )
+
+    cmake_output, cmake_error = _run_version_path(
+        cmake_path,
+        ("--version",),
+    )
+
+    if cmake_error or not cmake_output:
+        return (
+            f"PRE-FLIGHT FAILED ({stage}): "
+            f"не удалось проверить CMake: {cmake_error}"
+        )
+
+    # Windows: prefer the x64-targeting MSVC compiler.
+    if os.name == "nt":
+        compiler_path = (
+            find_program_path("MSVC")
+            or shutil.which("clang++")
+            or shutil.which("g++")
+        )
+    else:
+        compiler_path = (
+            shutil.which("c++")
+            or shutil.which("g++")
+            or shutil.which("clang++")
+        )
+
+    if not compiler_path:
+        return (
+            f"PRE-FLIGHT FAILED ({stage}): "
+            "C++ компилятор MSVC/GCC/Clang не найден. "
+            "Этап остановлен."
+        )
+
+    compiler_name = Path(compiler_path).name.lower()
+
+    compiler_args = (
+        ("/Bv",)
+        if compiler_name in {"cl.exe", "cl"}
+        else ("--version",)
+    )
+
+    compiler_output, compiler_error = _run_version_path(
+        compiler_path,
+        compiler_args,
+    )
+
+    if compiler_error or not compiler_output:
+        return (
+            f"PRE-FLIGHT FAILED ({stage}): "
+            f"не удалось проверить C++ компилятор: {compiler_error}"
+        )
+
+    return None
+
