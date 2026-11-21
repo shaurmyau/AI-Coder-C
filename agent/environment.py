@@ -285,11 +285,24 @@ def preflight_cpp_project(project: Path, stage: str) -> str | None:
         return f"PRE-FLIGHT FAILED: не удалось определить версию CMake: {error}"
 
     if os.name == "nt" and not shutil.which("cl.exe"):
-        return (
-            "PRE-FLIGHT FAILED: cl.exe не найден в текущем окружении. "
-            "Запусти агента из Visual Studio Developer PowerShell или проверь установку MSVC. "
-            f"Этап {stage} остановлен."
-        )
+        vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+        installed = False
+        if vswhere.is_file():
+            try:
+                probe = subprocess.run(
+                    [str(vswhere), "-latest", "-products", "*", "-requires",
+                     "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=20, shell=False, check=False,
+                )
+                installed = probe.returncode == 0 and bool(probe.stdout.strip())
+            except (OSError, subprocess.TimeoutExpired):
+                installed = False
+        if not installed:
+            return (
+                "PRE-FLIGHT FAILED: MSVC x64 не найден (нет cl.exe и установленного компонента "
+                "Visual Studio C++ Build Tools). Этап " + stage + " остановлен."
+            )
 
     cmake_file = project / "CMakeLists.txt"
     if not cmake_file.is_file():
