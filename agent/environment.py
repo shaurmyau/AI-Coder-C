@@ -437,6 +437,17 @@ def preflight_program(executable: str) -> str | None:
     return f"PRE-FLIGHT OK: {name} {version}"
 
 
+
+def preflight_python_module(python_executable: str, module: str) -> str | None:
+    """Verify a Python module can be invoked before using python -m."""
+    output, error = _run_version(python_executable, ("-m", module, "--version"))
+    if error:
+        return f"PRE-FLIGHT FAILED: Python module {module} недоступен: {error}"
+    match = _VERSION_RE.search(output or "")
+    version = match.group(1) if match else (output or "").splitlines()[0]
+    return f"PRE-FLIGHT OK: Python module {module} {version}"
+
+
 def preflight_cpp_project(project: Path, stage: str) -> str | None:
     """Validate the toolchain before CMake configure/build/test stages."""
     cmake_path = shutil.which("cmake")
