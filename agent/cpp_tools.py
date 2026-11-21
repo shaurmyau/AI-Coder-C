@@ -13,7 +13,7 @@ from typing import Sequence
 from langchain_core.tools import tool
 
 from agent.config import VCPKG_ROOT, VCPKG_TOOLCHAIN, safe_workspace_path
-from agent.environment import check_environment_report, preflight_cpp_project
+from agent.environment import check_environment_report, preflight_cpp_project, preflight_program
 
 
 def _confirm(label: str) -> bool:
@@ -201,9 +201,6 @@ def build_cpp_project(project_path: str = ".", build_type: str = "Debug") -> str
         build = project / "build"
         if not (build / "CMakeCache.txt").is_file():
             return "Сначала вызови configure_cpp_project."
-        preflight = preflight_cpp_project(project, "CTest")
-        if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
-            return preflight
         preflight = preflight_cpp_project(project, "C++ build")
         if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
             return preflight
@@ -226,6 +223,12 @@ def run_cpp_tests(project_path: str = ".", build_type: str = "Debug") -> str:
         build = project / "build"
         if not (build / "CMakeCache.txt").is_file():
             return "Сначала вызови configure_cpp_project."
+        preflight = preflight_cpp_project(project, "CTest")
+        if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
+            return preflight
+        ctest_check = preflight_program("ctest")
+        if ctest_check and ctest_check.startswith("PRE-FLIGHT FAILED"):
+            return ctest_check
         ctest = shutil.which("ctest")
         if not ctest:
             return "CTest не найден."
