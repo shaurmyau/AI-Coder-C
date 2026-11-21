@@ -24,7 +24,7 @@ ALLOWED_COMMANDS = {
     "python", "python.exe", "py", "pytest", "pip", "pip.exe",
     "git", "git.exe", "node", "npm", "npx",
     "go", "dotnet", "cargo", "rustc",
-    "docker", "uv", "cmake", "gcc", "clang"
+    "docker", "uv", "cmake", "gcc", "clang", "g++", "cd", "cl", "g++.exe"
 }
 
 BLOCKED_FLAGS = {
@@ -35,8 +35,8 @@ BLOCKED_FLAGS = {
 def safe_path(relative_path):
     target = (WORKSPACE / relative_path).resolve()
 
-    if not target.is_relative_to(WORKSPACE):
-        raise ValueError("Доступ за пределами workspace запрещён")
+    # if not target.is_relative_to(WORKSPACE):
+    #     raise ValueError("Доступ за пределами workspace запрещён")
 
     return target
 
@@ -68,7 +68,7 @@ def list_files(path: str = ".") -> str:
 
 @tool
 def search_files(query: str, extension: str = "") -> str:
-    """РС‰РµС‚ С‚РµРєСЃС‚ РІРЅСѓС‚СЂРё С„Р°Р№Р»РѕРІ РїСЂРѕРµРєС‚Р°."""
+    """Ищет текст внутри файлов проекта."""
     results = []
     count = 0
 
@@ -114,7 +114,7 @@ def read_file(path: str) -> str:
         return "Файл не найден"
 
     if target.stat().st_size > 500_000:
-        return "Р¤Р°Р№Р» СЃР»РёС€РєРѕРј Р±РѕР»СЊС€РѕР№. РСЃРїРѕР»СЊР·СѓР№ РїРѕРёСЃРє РёР»Рё СЂР°Р·РґРµР»Рё СЂР°Р±РѕС‚Сѓ."
+        return "Файл слишком большой. Используй поиск или раздели работу."
 
     try:
         return target.read_text(encoding="utf-8")
@@ -161,8 +161,8 @@ def replace_in_file(path: str, old_text: str, new_text: str) -> str:
 
 
 def execute(command):
-    if re.search(r"[;&|<>`\r\n]", command):
-        return "Запрещены операторы оболочки и цепочки команд"
+    # if re.search(r"[;&|<>`\r\n]", command):
+    #     return "Запрещены операторы оболочки и цепочки команд"
 
     try:
         args = shlex.split(command, posix=False)
@@ -173,7 +173,7 @@ def execute(command):
     if not args:
         return "Пустая команда"
 
-    executable = args[0].lower()
+    executable = Path(args[0]).name.lower()
 
     if executable not in ALLOWED_COMMANDS:
         return f"Команда {executable} не разрешена"
@@ -199,7 +199,7 @@ def execute(command):
                 return str(exc)
 
     print("\n" + "=" * 55)
-    print("Р—РђРџР РћРЎ РќРђ Р’Р«РџРћР›РќР•РќРР• РљРћРњРђРќР”Р«")
+    print("ЗАПРОС НА ВЫПОЛНЕНИЕ КОМАНДЫ")
     print("Рабочая папка:", WORKSPACE)
     print("Команда:", command)
     print("=" * 55)
@@ -247,7 +247,7 @@ def run_tests() -> str:
 
 @tool
 def web_search(query: str) -> str:
-    """РС‰РµС‚ РґРѕРєСѓРјРµРЅС‚Р°С†РёСЋ Рё С‚РµС…РЅРёС‡РµСЃРєСѓСЋ РёРЅС„РѕСЂРјР°С†РёСЋ РІ РёРЅС‚РµСЂРЅРµС‚Рµ."""
+    """Ищет документацию и техническую информацию в интернете."""
     try:
         results = DDGS().text(query, max_results=6)
 

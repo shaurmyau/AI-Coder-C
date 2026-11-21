@@ -62,9 +62,9 @@ def main():
     print("Workspace:", ROOT / "workspace")
     print("Persistent memory: SQLite")
     print()
-    print("РљРѕРјР°РЅРґС‹:")
-    print("/new    - РЅР°С‡Р°С‚СЊ РЅРѕРІС‹Р№ РґРёР°Р»РѕРі")
-    print("/exit   - РІС‹С…РѕРґ")
+    print("Команды:")
+    print("/new    - начать новый диалог")
+    print("/exit   - выход")
     print("=" * 65)
 
     db_path = ROOT / "logs" / "memory.sqlite"
@@ -72,12 +72,27 @@ def main():
     with SqliteSaver.from_conn_string(str(db_path)) as memory:
         agent = build_agent(memory)
 
-        # РџРѕСЃС‚РѕСЏРЅРЅС‹Р№ ID РїРѕР·РІРѕР»СЏРµС‚ РїСЂРѕРґРѕР»Р¶Р°С‚СЊ РґРёР°Р»РѕРі РїРѕСЃР»Рµ РїРµСЂРµР·Р°РїСѓСЃРєР°.
+        # Постоянный ID позволяет продолжать диалог после перезапуска.
         thread_id = "main"
 
         while True:
             try:
-                task = input("\nYOU > ").strip()
+                first_line = input("\nYOU > ").strip()
+
+                if first_line == "/multi":
+                    print("Вставь текст. Для отправки введи /send отдельной строкой.")
+
+                    lines = []
+
+                    while True:
+                        line = input()
+                        if line.strip() == "/send":
+                            break
+                        lines.append(line)
+
+                    task = "\n".join(lines).strip()
+                else:
+                    task = first_line
 
                 if not task:
                     continue
@@ -87,10 +102,10 @@ def main():
 
                 if task.lower() == "/new":
                     thread_id = str(uuid.uuid4())
-                    print("РЎРѕР·РґР°РЅ РЅРѕРІС‹Р№ РґРёР°Р»РѕРі:", thread_id)
+                    print("Создан новый диалог:", thread_id)
                     continue
 
-                print("\nAI CODER > Р’С‹РїРѕР»РЅСЏСЋ Р·Р°РґР°С‡Сѓ...\n")
+                print("\nAI CODER > Выполняю задачу...\n")
                 logging.info("USER TASK: %s", task[:1000])
 
                 result = agent.invoke(
@@ -125,11 +140,11 @@ def main():
                 logging.info("TASK COMPLETED")
 
             except KeyboardInterrupt:
-                print("\nРџСЂРµСЂРІР°РЅРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»РµРј.")
+                print("\nПрервано пользователем.")
 
             except Exception as exc:
                 logging.exception("AGENT ERROR")
-                print("\nРћРЁРР‘РљРђ:", exc)
+                print("\nОШИБКА:", exc)
 
 
 if __name__ == "__main__":
