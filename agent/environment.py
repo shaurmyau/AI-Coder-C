@@ -29,6 +29,8 @@ class VersionCheck:
 
 PROGRAMS: dict[str, tuple[str, ...]] = {
     "Python": ("python", "--version"),
+    "Pip": ("pip", "--version"),
+    "pytest": ("pytest", "--version"),
     "Git": ("git", "--version"),
     "CMake": ("cmake", "--version"),
     "CTest": ("ctest", "--version"),
@@ -43,6 +45,9 @@ PROGRAMS: dict[str, tuple[str, ...]] = {
     "Ollama": ("ollama", "--version"),
     "vcpkg": ("vcpkg", "version"),
     "MSVC": ("cl", "/Bv"),
+    "MSBuild": ("msbuild", "-version"),
+    "GCC": ("gcc", "--version"),
+    "Clang": ("clang", "--version"),
 }
 
 _VERSION_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+){0,3}(?:[-+][0-9A-Za-z.-]+)?)")
@@ -369,6 +374,7 @@ def preflight_program(executable: str) -> str | None:
     key = Path(executable).name.lower()
     aliases = {
         "python.exe": "Python", "python": "Python", "py.exe": "Python", "py": "Python",
+        "pip.exe": "Pip", "pip": "Pip", "pytest.exe": "pytest", "pytest": "pytest",
         "git.exe": "Git", "git": "Git", "cmake.exe": "CMake", "cmake": "CMake",
         "ctest.exe": "CTest", "ctest": "CTest", "ninja.exe": "Ninja", "ninja": "Ninja",
         "node.exe": "Node.js", "node": "Node.js", "npm.cmd": "npm", "npm": "npm",
@@ -376,6 +382,8 @@ def preflight_program(executable: str) -> str | None:
         "rustc.exe": "Rust", "rustc": "Rust", "cargo.exe": "Cargo", "cargo": "Cargo",
         "docker.exe": "Docker", "docker": "Docker", "ollama.exe": "Ollama", "ollama": "Ollama",
         "vcpkg.exe": "vcpkg", "vcpkg": "vcpkg", "cl.exe": "MSVC", "cl": "MSVC",
+        "msbuild.exe": "MSBuild", "msbuild": "MSBuild",
+        "gcc.exe": "GCC", "gcc": "GCC", "clang.exe": "Clang", "clang": "Clang",
     }
     name = aliases.get(key)
     if not name:
