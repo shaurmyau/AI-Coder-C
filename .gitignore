@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 .venv/
 venv/
 __pycache__/
@@ -17,6 +17,9 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+logs/memory.sqlite*
+logs/agent.log
+logs/backups/
 
 # Build artifacts
 build/
@@ -37,6 +40,10 @@ vcpkg_installed/
 .vscode/
 .idea/
 .vs/
+
+# Tests and coverage
+.coverage
+htmlcov/
 
 # Temporary
 *.log
