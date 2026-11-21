@@ -85,6 +85,22 @@ def _run_version(executable: str, args: Sequence[str], timeout: int = 12) -> tup
     return output[:1200] or None, ""
 
 
+
+def _run_version_path(path: str | Path, args: Sequence[str], timeout: int = 12) -> tuple[str | None, str]:
+    try:
+        result = subprocess.run(
+            [str(path), *args], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+            shell=False, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"Не удалось получить версию: {exc}"
+    output = (result.stdout + "\n" + result.stderr).strip()
+    if result.returncode != 0 and not output:
+        return None, f"Команда проверки завершилась с кодом {result.returncode}"
+    return output[:1200] or None, ""
+
+
 def _installed_sfml_version() -> str | None:
     candidates = [
         VCPKG_ROOT / "installed" / "x64-windows" / "share" / "sfml" / "SFMLConfigVersion.cmake",
@@ -169,10 +185,31 @@ def _check_programs(names: Sequence[str] | None = None) -> list[VersionCheck]:
         if name not in selected:
             continue
         path = shutil.which(executable)
+        if not path and name == "vcpkg":
+            local_vcpkg = VCPKG_ROOT / ("vcpkg.exe" if os.name == "nt" else "vcpkg")
+            if local_vcpkg.is_file():
+                path = str(local_vcpkg)
+        if not path and name == "MSVC" and os.name == "nt":
+            vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            if vswhere.is_file():
+                try:
+                    found = subprocess.run(
+                        [str(vswhere), "-latest", "-products", "*", "-requires",
+                         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        timeout=20, shell=False, check=False,
+                    )
+                    if found.returncode == 0 and found.stdout.strip():
+                        tools_dir = Path(found.stdout.strip()) / "VC" / "Tools" / "MSVC"
+                        candidates = sorted(tools_dir.glob("*/bin/Hostx64/x64/cl.exe"))
+                        if candidates:
+                            path = str(candidates[-1])
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
         if not path:
-            results.append(VersionCheck(name, None, None, "NOT FOUND", "Нет в PATH"))
+            results.append(VersionCheck(name, None, None, "NOT FOUND", "Не найден в PATH или стандартном каталоге установки"))
             continue
-        output, error = _run_version(executable, args)
+        output, error = _run_version_path(path, args) if Path(path).is_file() else _run_version(executable, args)
         if error:
             results.append(VersionCheck(name, path, None, "ERROR", error))
             continue
