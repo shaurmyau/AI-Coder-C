@@ -19,9 +19,9 @@ from agent.cpp_tools import CPP_TOOLS
 
 load_dotenv()
 
-ROOT = Path(r"D:\AI-Coder").resolve()
-WORKSPACE = (ROOT / "workspace").resolve()
-BACKUPS = (ROOT / "logs" / "backups").resolve()
+ROOT = PROJECT_ROOT
+BACKUPS = BACKUP_DIR
+
 
 ALLOWED_COMMANDS = {
     "python", "python.exe", "py", "pytest", "pip", "pip.exe",
