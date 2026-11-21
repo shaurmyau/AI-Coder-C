@@ -397,7 +397,7 @@ def preflight_cpp_project(project: Path, stage: str) -> str | None:
     if sfml_match and sfml_match.group(1) and sfml_installed:
         required = _version_tuple(sfml_match.group(1))
         installed = _version_tuple(sfml_installed)
-        if required and installed and installed < required:
+        if required and installed and tuple((list(installed) + [0] * 4)[:4]) < tuple((list(required) + [0] * 4)[:4]):
             return (
                 f"PRE-FLIGHT FAILED: проект требует SFML >= {sfml_match.group(1)}, "
                 f"а в vcpkg обнаружена SFML {sfml_installed}. Этап {stage} остановлен."
