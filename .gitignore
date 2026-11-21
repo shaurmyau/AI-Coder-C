@@ -1,45 +1,35 @@
-﻿# Python
+# Python
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
-
 # Secrets
 .env
 .env.*
 !.env.example
 *.pem
 *.key
-
-# Databases and memory
+# Databases and logs
 *.db
 *.sqlite
 *.sqlite3
-
-# Build artifacts
+logs/
+# Build output
 build/
 dist/
 out/
+vcpkg_installed/
 *.obj
 *.exe
 *.dll
 *.lib
 *.pdb
 *.ilk
-
-# vcpkg
+# Local dependencies
 tools/vcpkg/
-vcpkg_installed/
-
 # IDE
 .vscode/
 .idea/
 .vs/
-
-# Temporary
-*.log
-*.tmp
-.DS_Store
-Thumbs.db
