@@ -91,8 +91,11 @@ def _run_version(executable: str, args: Sequence[str], timeout: int = 12) -> tup
 
 def _run_version_path(path: str | Path, args: Sequence[str], timeout: int = 12) -> tuple[str | None, str]:
     try:
+        command = [str(path), *args]
+        if os.name == "nt" and Path(path).suffix.lower() in {".cmd", ".bat"}:
+            command = ["cmd.exe", "/d", "/c", str(path), *args]
         result = subprocess.run(
-            [str(path), *args], capture_output=True, text=True,
+            command, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=timeout,
             shell=False, check=False,
         )
