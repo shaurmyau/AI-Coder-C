@@ -9,6 +9,7 @@ from langchain_ollama import ChatOllama
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from agent.config import LOG_DIR, PROJECT_ROOT, WORKSPACE
+from agent.environment import check_ollama_service
 from agent.prompts import SYSTEM_PROMPT
 from agent.tools import TOOLS
 
@@ -63,6 +64,12 @@ def main():
     print("Memory: SQLite")
     print("\nCommands: /new — new conversation | /exit — quit")
     print("=" * 68)
+
+    service_ok, service_message = check_ollama_service(BASE_URL, MODEL)
+    print("\n[PRE-FLIGHT]", service_message)
+    if not service_ok:
+        print("Агент не запущен: сначала запусти Ollama и проверь OLLAMA_BASE_URL в .env.")
+        return
 
     db_path = LOG_DIR / "memory.sqlite"
     with SqliteSaver.from_conn_string(str(db_path)) as memory:
