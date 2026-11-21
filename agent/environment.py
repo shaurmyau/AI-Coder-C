@@ -66,8 +66,11 @@ def _run_version(executable: str, args: Sequence[str], timeout: int = 12) -> tup
         return None, f"{executable} не найден в PATH"
 
     try:
+        command = [path, *args]
+        if os.name == "nt" and Path(path).suffix.lower() in {".cmd", ".bat"}:
+            command = ["cmd.exe", "/d", "/c", path, *args]
         result = subprocess.run(
-            [path, *args],
+            command,
             capture_output=True,
             text=True,
             encoding="utf-8",
