@@ -3,6 +3,7 @@ import re
 import shlex
 import socket
 import ipaddress
+import hashlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,7 +15,7 @@ from ddgs import DDGS
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 
-from agent.config import BACKUP_DIR, PROJECT_ROOT, WORKSPACE, safe_workspace_path
+from agent.config import (BACKUP_DIR, PROJECT_ROOT, WORKSPACE, ALLOWED_ROOTS, allowed_root_for, display_path, safe_workspace_path)
 from agent.cpp_tools import CPP_TOOLS
 
 load_dotenv()
@@ -36,23 +37,28 @@ BLOCKED_FLAGS = {
 }
 
 def safe_path(relative_path):
-    target = (WORKSPACE / relative_path).resolve()
-
-    if not target.is_relative_to(WORKSPACE):
-        raise ValueError("Р”РѕСЃС‚СѓРї Р·Р° РїСЂРµРґРµР»Р°РјРё workspace Р·Р°РїСЂРµС‰С‘РЅ")
-
-    return target
+    """Resolve a workspace-relative path or an explicitly allow-listed absolute path."""
+    return safe_workspace_path(relative_path)
 
 
 def backup_file(target):
     if not target.exists() or not target.is_file():
         return
 
-    relative = target.relative_to(WORKSPACE)
-    backup = BACKUPS / relative
+    root = allowed_root_for(target)
+    relative = target.relative_to(root)
+    if root == WORKSPACE:
+        backup = BACKUPS / "workspace" / relative
+    else:
+        root_id = hashlib.sha256(str(root).casefold().encode("utf-8")).hexdigest()[:12]
+        backup = BACKUPS / "external" / root_id / relative
 
     backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(target, backup)
+
+
+def _display_path(path):
+    return display_path(path)
 
 
 @tool
@@ -64,48 +70,51 @@ def list_files(path: str = ".") -> str:
         return "РљР°С‚Р°Р»РѕРі РЅРµ РЅР°Р№РґРµРЅ"
 
     return "\n".join(
-        f"{'[DIR]' if p.is_dir() else '[FILE]'} {p.relative_to(WORKSPACE)}"
+        f"{'[DIR]' if p.is_dir() else '[FILE]'} {_display_path(p)}"
         for p in sorted(target.iterdir())
     )[:15000]
 
 
 @tool
-def search_files(query: str, extension: str = "") -> str:
-    """РС‰РµС‚ С‚РµРєСЃС‚ РІРЅСѓС‚СЂРё С„Р°Р№Р»РѕРІ РїСЂРѕРµРєС‚Р°."""
+def search_files(query: str, extension: str = "", path: str = ".") -> str:
+    """Ищет текст внутри файлов указанного каталога; path может быть разрешённой внешней папкой."""
+    try:
+        base = safe_path(path)
+    except ValueError as exc:
+        return str(exc)
+
+    if not base.exists():
+        return f"Каталог не найден: {_display_path(base)}"
+
+    candidates = [base] if base.is_file() else base.rglob("*")
     results = []
     count = 0
 
-    for path in WORKSPACE.rglob("*"):
-        if not path.is_file():
+    for file_path in candidates:
+        if not file_path.is_file():
             continue
-
-        if any(x in path.parts for x in (
-            ".git", "node_modules", ".venv", "__pycache__"
-        )):
+        if any(part.lower() in {
+            ".git", "node_modules", ".venv", "venv", "__pycache__", "build"
+        } for part in file_path.parts):
             continue
-
-        if extension and path.suffix.lower() != extension.lower():
+        if extension and file_path.suffix.lower() != extension.lower():
             continue
-
         try:
-            if path.stat().st_size > 500_000:
+            if file_path.stat().st_size > 500_000:
                 continue
-
-            content = path.read_text(encoding="utf-8")
+            content = file_path.read_text(encoding="utf-8")
             for line_number, line in enumerate(content.splitlines(), 1):
                 if query.lower() in line.lower():
                     results.append(
-                        f"{path.relative_to(WORKSPACE)}:{line_number}: {line[:300]}"
+                        f"{_display_path(file_path)}:{line_number}: {line[:300]}"
                     )
                     count += 1
-
                     if count >= 100:
                         return "\n".join(results)
-
         except (UnicodeError, OSError):
             continue
 
-    return "\n".join(results) if results else "РЎРѕРІРїР°РґРµРЅРёР№ РЅРµ РЅР°Р№РґРµРЅРѕ"
+    return "\n".join(results) if results else "Совпадений не найдено"
 
 
 @tool
@@ -139,7 +148,7 @@ def write_file(path: str, content: str) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
 
-    return f"РЎРѕС…СЂР°РЅС‘РЅ С„Р°Р№Р»: {target.relative_to(WORKSPACE)}"
+    return f"РЎРѕС…СЂР°РЅС‘РЅ С„Р°Р№Р»: {_display_path(target)}"
 
 
 @tool
