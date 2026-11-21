@@ -13,6 +13,7 @@ from typing import Sequence
 from langchain_core.tools import tool
 
 from agent.config import VCPKG_ROOT, VCPKG_TOOLCHAIN, safe_workspace_path
+from agent.environment import check_environment_report, preflight_cpp_project
 
 
 def _confirm(label: str) -> bool:
@@ -172,6 +173,9 @@ def configure_cpp_project(project_path: str = ".", build_type: str = "Debug") ->
         project = _project_dir(project_path)
         if not (project / "CMakeLists.txt").is_file():
             return f"CMakeLists.txt не найден: {project}"
+        preflight = preflight_cpp_project(project, "CMake configure")
+        if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
+            return preflight
         if build_type not in {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}:
             return "build_type должен быть Debug, Release, RelWithDebInfo или MinSizeRel."
         cmake = shutil.which("cmake")
@@ -197,6 +201,12 @@ def build_cpp_project(project_path: str = ".", build_type: str = "Debug") -> str
         build = project / "build"
         if not (build / "CMakeCache.txt").is_file():
             return "Сначала вызови configure_cpp_project."
+        preflight = preflight_cpp_project(project, "CTest")
+        if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
+            return preflight
+        preflight = preflight_cpp_project(project, "C++ build")
+        if preflight and preflight.startswith("PRE-FLIGHT FAILED"):
+            return preflight
         if build_type not in {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}:
             return "Недопустимый build_type."
         cmake = shutil.which("cmake")
@@ -260,5 +270,14 @@ def run_cpp_game(project_path: str = ".", executable: str = "") -> str:
         return f"Ошибка запуска: {exc}"
 
 
-CPP_TOOLS = [create_sfml_game_project, configure_cpp_project, build_cpp_project,
-             run_cpp_tests, run_cpp_game]
+@tool
+def check_environment(project_path: str = ".") -> str:
+    """Определяет версии установленных программ, инструментов и зависимостей проекта."""
+    try:
+        return check_environment_report(project_path)
+    except Exception as exc:
+        return f"Ошибка диагностики окружения: {exc}"
+
+
+CPP_TOOLS = [check_environment, create_sfml_game_project, configure_cpp_project,
+             build_cpp_project, run_cpp_tests, run_cpp_game]
