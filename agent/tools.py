@@ -212,10 +212,15 @@ def check_environment() -> str:
     return "\n".join(lines)
 
 
-def execute(command: str) -> str:
-    """Run one approved executable in WORKSPACE without invoking a shell."""
+def execute(command: str, working_directory: Path = WORKSPACE) -> str:
+    """Run one approved executable in a known project directory without a shell."""
     if not isinstance(command, str) or not command.strip():
         return "Пустая команда."
+
+    working_directory = Path(working_directory).resolve()
+    allowed_directories = {WORKSPACE.resolve(), PROJECT_ROOT.resolve()}
+    if working_directory not in allowed_directories:
+        return "Запуск разрешён только из корня проекта или workspace."
 
     if SHELL_OPERATOR_PATTERN.search(command):
         return (
@@ -293,7 +298,7 @@ def execute(command: str) -> str:
     resolved_executable = shutil.which(args[0]) or args[0]
     print("\n" + "=" * 60)
     print("ЗАПРОС НА ВЫПОЛНЕНИЕ КОМАНДЫ")
-    print("Рабочая папка:", WORKSPACE)
+    print("Рабочая папка:", working_directory)
     print("Исполняемый файл:", resolved_executable)
     print("Команда:", command)
     print("=" * 60)
@@ -306,7 +311,7 @@ def execute(command: str) -> str:
     try:
         result = subprocess.run(
             args,
-            cwd=str(WORKSPACE),
+            cwd=str(working_directory),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -319,7 +324,7 @@ def execute(command: str) -> str:
         stderr = result.stderr[-MAX_TOOL_OUTPUT:]
         return (
             f"COMMAND: {command}\n"
-            f"CWD: {WORKSPACE}\n"
+            f"CWD: {working_directory}\n"
             f"ELAPSED: {elapsed:.2f}s\n"
             f"EXIT CODE: {result.returncode}\n"
             f"STDOUT:\n{stdout or '(empty)'}\n"
@@ -354,8 +359,193 @@ def run_command(command: str) -> str:
 
 @tool
 def run_tests() -> str:
-    """Запускает pytest текущим Python-окружением из корня workspace после подтверждения."""
-    return execute("python -m pytest -q")
+    """Запускает Python-тесты из корня репозитория, а не из workspace."""
+    tests_directory = PROJECT_ROOT / "tests"
+    if not tests_directory.is_dir():
+        return f"Каталог Python-тестов не найден: {tests_directory}"
+    return execute("python -m pytest -q tests", working_directory=PROJECT_ROOT)
+
+
+@tool
+def build_cpp_project(build_directory: str = "build", configuration: str = "Debug") -> str:
+    """Конфигурирует и собирает CMake-проект внутри workspace с точными кодами возврата."""
+    allowed_configurations = {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}
+    if configuration not in allowed_configurations:
+        return "Недопустимая конфигурация. Разрешены: " + ", ".join(sorted(allowed_configurations))
+
+    try:
+        build_path = safe_path(build_directory)
+        relative_build_path = build_path.relative_to(WORKSPACE)
+    except (ValueError, OSError) as exc:
+        return f"Недопустимый каталог сборки: {exc}"
+
+    if not relative_build_path.parts:
+        return "Каталог сборки не может совпадать с корнем workspace."
+    if not (WORKSPACE / "CMakeLists.txt").is_file():
+        return f"CMakeLists.txt не найден в {WORKSPACE}."
+    if not shutil.which("cmake"):
+        return "CMake не найден в PATH. Запусти start.ps1 с настроенным окружением."
+
+    build_arg = relative_build_path.as_posix()
+    commands = [
+        ["cmake", "-S", ".", "-B", build_arg],
+        ["cmake", "--build", build_arg, "--config", configuration, "--parallel"],
+    ]
+    print("\n" + "=" * 60)
+    print("ПЛАН СБОРКИ CMAKE")
+    print("Рабочая папка:", WORKSPACE)
+    print("Конфигурация:", configuration)
+    print("1.", " ".join(commands[0]))
+    print("2.", " ".join(commands[1]))
+    print("=" * 60)
+    answer = input("Разрешить конфигурацию и сборку? (y/n): ").strip().lower()
+    if answer not in {"y", "yes", "д", "да"}:
+        return "Сборка отклонена пользователем."
+
+    try:
+        timeout_seconds = int(os.environ.get("AI_CODER_COMMAND_TIMEOUT", "300"))
+        timeout_seconds = max(1, min(timeout_seconds, 1800))
+    except ValueError:
+        timeout_seconds = 300
+
+    reports = []
+    for args in commands:
+        command_text = " ".join(args)
+        started_at = time.perf_counter()
+        try:
+            result = subprocess.run(
+                args,
+                cwd=str(WORKSPACE),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_seconds,
+                shell=False,
+            )
+            elapsed = time.perf_counter() - started_at
+            reports.append(
+                f"COMMAND: {command_text}\n"
+                f"ELAPSED: {elapsed:.2f}s\n"
+                f"EXIT CODE: {result.returncode}\n"
+                f"STDOUT:\n{(result.stdout or '')[-MAX_TOOL_OUTPUT:] or '(empty)'}\n"
+                f"STDERR:\n{(result.stderr or '')[-MAX_TOOL_OUTPUT:] or '(empty)'}"
+            )
+            if result.returncode != 0:
+                reports.append("Сборка остановлена: предыдущая команда завершилась с ошибкой.")
+                break
+        except subprocess.TimeoutExpired as exc:
+            reports.append(
+                f"COMMAND: {command_text}\nTIMEOUT: превышено {timeout_seconds} секунд.\n"
+                f"STDOUT: {str(exc.stdout or '')[-MAX_TOOL_OUTPUT:]}\n"
+                f"STDERR: {str(exc.stderr or '')[-MAX_TOOL_OUTPUT:]}"
+            )
+            break
+        except OSError as exc:
+            reports.append(f"COMMAND: {command_text}\nОШИБКА ЗАПУСКА: {exc}")
+            break
+
+    return "\n\n".join(reports)
+
+
+@tool
+def run_cpp_tests(build_directory: str = "build", configuration: str = "Debug") -> str:
+    """Запускает только реально сконфигурированные CTest-тесты."""
+    allowed_configurations = {"Debug", "Release", "RelWithDebInfo", "MinSizeRel"}
+    if configuration not in allowed_configurations:
+        return "Недопустимая конфигурация CMake."
+    try:
+        build_path = safe_path(build_directory)
+    except ValueError as exc:
+        return f"Недопустимый каталог сборки: {exc}"
+
+    if not (build_path / "CTestTestfile.cmake").is_file():
+        return (
+            "CTest-тесты не сконфигурированы: CTestTestfile.cmake отсутствует. "
+            "Это не означает, что тесты прошли. Проверь enable_testing()/include(CTest) "
+            "и add_test() в CMakeLists.txt."
+        )
+
+    return execute(
+        f'ctest --test-dir "{build_path}" -C {configuration} '
+        "--output-on-failure --no-tests=error"
+    )
+
+
+@tool
+def run_gui(executable: str, arguments: str = "") -> str:
+    """Запускает GUI EXE отдельно от агента и проверяет, остался ли процесс жив после старта."""
+    try:
+        target = safe_path(executable)
+    except ValueError as exc:
+        return str(exc)
+    if target.suffix.lower() != ".exe" or not target.is_file():
+        return "Укажи существующий EXE внутри workspace."
+
+    try:
+        parsed_arguments = shlex.split(arguments, posix=False) if arguments.strip() else []
+        parsed_arguments = [
+            item[1:-1] if len(item) >= 2 and item[0] == item[-1] and item[0] in "\\\"'" else item
+            for item in parsed_arguments
+        ]
+    except ValueError as exc:
+        return f"Ошибка разбора аргументов GUI: {exc}"
+
+    print("\n" + "=" * 60)
+    print("ЗАПУСК GUI-ПРИЛОЖЕНИЯ")
+    print("Исполняемый файл:", target)
+    print("Рабочая папка:", WORKSPACE)
+    print("=" * 60)
+    answer = input("Разрешить запуск GUI-приложения? (y/n): ").strip().lower()
+    if answer not in {"y", "yes", "д", "да"}:
+        return "Запуск GUI-приложения отклонён пользователем."
+
+    launch_options = {}
+    if os.name == "nt":
+        launch_options["creationflags"] = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        )
+    else:
+        launch_options["start_new_session"] = True
+
+    try:
+        process = subprocess.Popen(
+            [str(target), *parsed_arguments],
+            cwd=str(WORKSPACE),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            shell=False,
+            **launch_options,
+        )
+    except OSError as exc:
+        return f"Не удалось запустить GUI-приложение: {exc}"
+
+    try:
+        startup_timeout = float(os.environ.get("AI_CODER_GUI_STARTUP_TIMEOUT", "5.0"))
+        startup_timeout = max(0.2, min(startup_timeout, 10.0))
+    except ValueError:
+        startup_timeout = 5.0
+
+    try:
+        return_code = process.wait(timeout=startup_timeout)
+    except subprocess.TimeoutExpired:
+        if process.poll() is None:
+            return (
+                f"GUI-процесс запущен и остаётся активным после {startup_timeout:.1f} с. "
+                f"PID: {process.pid}. "
+                "Это не доказывает, что окно отображается или игра работает."
+            )
+        return_code = process.returncode
+
+    unsigned_code = int(return_code) & 0xFFFFFFFF
+    return (
+        f"GUI-процесс завершился в пределах контрольных {startup_timeout:.1f} с. "
+        f"EXIT CODE: {return_code} (0x{unsigned_code:08X}). "
+        "Код 0 сам по себе не подтверждает, что окно успело появиться. "
+        "Ненулевой код означает, что запуск нельзя считать успешным."
+    )
 
 
 @tool
@@ -425,6 +615,9 @@ TOOLS = [
     replace_in_file,
     run_command,
     run_tests,
+    build_cpp_project,
+    run_cpp_tests,
+    run_gui,
     web_search,
     fetch_webpage,
 ]
