@@ -53,6 +53,9 @@ struct GameState {
 // Предварительное объявление функции WndProc
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
+// Обработка изменения размера окна
+void OnSize(HWND hwnd, int width, int height);
+
 // Функции инициализации
 void init_game(GameState& state);
 void reset_game(GameState& state);

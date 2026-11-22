@@ -144,8 +144,9 @@ void draw_tile(HDC hdc, int x, int y, const Tile& tile) {
         
         // Обводка
         HPEN wallPen = CreatePen(PS_SOLID, 2, RGB(100, 50, 10));
-        SelectObject(hdc, wallPen);
+        HGDIOBJ oldPen = SelectObject(hdc, wallPen);
         Rectangle(hdc, x * TILE_SIZE, y * TILE_SIZE, (x + 1) * TILE_SIZE, (y + 1) * TILE_SIZE);
+        SelectObject(hdc, oldPen); // Восстанавливаем предыдущее перо
         DeleteObject(wallPen);
     } else {
         // Зеленая трава для пола
@@ -154,8 +155,9 @@ void draw_tile(HDC hdc, int x, int y, const Tile& tile) {
         DeleteObject(floorBrush);
         
         HPEN floorPen = CreatePen(PS_SOLID, 2, RGB(50, 100, 50));
-        SelectObject(hdc, floorPen);
+        HGDIOBJ oldPen = SelectObject(hdc, floorPen);
         Rectangle(hdc, x * TILE_SIZE, y * TILE_SIZE, (x + 1) * TILE_SIZE, (y + 1) * TILE_SIZE);
+        SelectObject(hdc, oldPen); // Восстанавливаем предыдущее перо
         DeleteObject(floorPen);
     }
 }
@@ -173,9 +175,10 @@ void draw_player(HDC hdc, const Player& player) {
     DeleteObject(playerBrush);
     
     HPEN playerPen = CreatePen(PS_SOLID, 2, RGB(0, 200, 255));
-    SelectObject(hdc, playerPen);
+    HGDIOBJ oldPen = SelectObject(hdc, playerPen);
     InflateRect(&rect, 4, 4);
     Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
+    SelectObject(hdc, oldPen); // Восстанавливаем предыдущее перо
     DeleteObject(playerPen);
     
     // Полоска здоровья
@@ -207,9 +210,10 @@ void draw_enemy(HDC hdc, const Enemy& enemy) {
     DeleteObject(enemyBrush);
     
     HPEN enemyPen = CreatePen(PS_SOLID, 2, RGB(180, 0, 0));
-    SelectObject(hdc, enemyPen);
+    HGDIOBJ oldPen = SelectObject(hdc, enemyPen);
     InflateRect(&rect, 4, 4);
     Rectangle(hdc, rect.left, rect.top, rect.right, rect.bottom);
+    SelectObject(hdc, oldPen); // Восстанавливаем предыдущее перо
     DeleteObject(enemyPen);
     
     // Полоска здоровья врага
@@ -230,12 +234,21 @@ void draw_enemy(HDC hdc, const Enemy& enemy) {
 
 // Отрисовка интерфейса
 void draw_ui(HDC hdc, const GameState& state) {
-    // Заголовок
+    // Заголовок - используем шрифт с поддержкой кириллицы (Consolas или системный)
     HFONT titleFont = CreateFontA(
         24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Arial"
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Consolas"
     );
+    
+    // Если Consolas не найден, пробуем Segoe UI
+    if (titleFont == NULL) {
+        titleFont = CreateFontA(
+            24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI"
+        );
+    }
     
     HGDIOBJ oldFont = SelectObject(hdc, titleFont);
     
@@ -264,8 +277,14 @@ void draw_ui(HDC hdc, const GameState& state) {
                  "Нажмите любую клавишу для рестарта", 34);
     }
     
-    SelectObject(hdc, oldFont);
+    SelectObject(hdc, oldFont); // Восстанавливаем предыдущий шрифт
     DeleteObject(titleFont);
+}
+
+// Обработка изменения размера окна
+void OnSize(HWND hwnd, int width, int height) {
+    // Окно не нужно перерисовывать при изменении размера,
+    // так как мы используем фиксированный размер
 }
 
 // Обработка сообщений Windows
@@ -275,39 +294,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // Инициализация уже выполнена в WinMain
             return 0;
             
-        case WM_ERASEBKGND: {
-            // Всегда возвращаем TRUE, чтобы окно перерисовывалось
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hwnd, &ps);
-            
-            // Очистка фона
-            HBRUSH whiteBrush = CreateSolidBrush(RGB(240, 240, 240));
-            RECT clientRect = {0, 0, SCREEN_WIDTH, SCREEN_HEIGHT};
-            FillRect(hdc, &clientRect, whiteBrush);
-            DeleteObject(whiteBrush);
-            
-            // Отрисовка карты
-            GameState* state = reinterpret_cast<GameState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
-            for (int y = 0; y < MAP_HEIGHT; ++y) {
-                for (int x = 0; x < MAP_WIDTH; ++x) {
-                    draw_tile(hdc, x, y, state->tiles[x][y]);
-                }
-            }
-            
-            // Отрисовка врагов
-            for (const auto& enemy : state->enemies) {
-                draw_enemy(hdc, enemy);
-            }
-            
-            // Отрисовка игрока
-            draw_player(hdc, state->player);
-            
-            // Отрисовка UI
-            draw_ui(hdc, *state);
-            
-            EndPaint(hwnd, &ps);
+        case WM_SIZE:
+            OnSize(hwnd, LOWORD(lParam), HIWORD(lParam));
             return TRUE;
-        }
+            
+        case WM_ERASEBKGND:
+            // Не используем BeginPaint/EndPaint в WM_ERASEBKGND
+            // Отрисовка будет выполнена в WM_PAINT
+            return TRUE;
             
         case WM_KEYDOWN: {
             if (wParam == VK_ESCAPE) {
@@ -325,7 +319,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             
             if (dx != 0 || dy != 0) {
-                move_player(*reinterpret_cast<GameState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA)), dx, dy);
+                GameState* state = reinterpret_cast<GameState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
+                if (state) {
+                    move_player(*state, dx, dy);
+                    // Перерисовка окна после движения игрока
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
             }
             return 0;
         }
@@ -349,28 +348,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             FillRect(hdc, &clientRect, whiteBrush);
             DeleteObject(whiteBrush);
             
-            // Отрисовка карты
+            // Получаем указатель на состояние игры с проверкой
             GameState* state = reinterpret_cast<GameState*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
-            for (int y = 0; y < MAP_HEIGHT; ++y) {
-                for (int x = 0; x < MAP_WIDTH; ++x) {
-                    draw_tile(hdc, x, y, state->tiles[x][y]);
+            if (state) {
+                for (int y = 0; y < MAP_HEIGHT; ++y) {
+                    for (int x = 0; x < MAP_WIDTH; ++x) {
+                        draw_tile(hdc, x, y, state->tiles[x][y]);
+                    }
+                    
+                    // Отрисовка врагов
+                    for (const auto& enemy : state->enemies) {
+                        draw_enemy(hdc, enemy);
+                    }
+                    
+                    // Отрисовка игрока
+                    draw_player(hdc, state->player);
+                    
+                    // Отрисовка UI
+                    draw_ui(hdc, *state);
                 }
             }
-            
-            // Отрисовка врагов
-            for (const auto& enemy : state->enemies) {
-                draw_enemy(hdc, enemy);
-            }
-            
-            // Отрисовка игрока
-            draw_player(hdc, state->player);
-            
-            // Отрисовка UI
-            draw_ui(hdc, *state);
             
             EndPaint(hwnd, &ps);
             return 0;
         }
+        
+        case WM_ACTIVATE:
+            // Перерисовка при активации окна будет выполнена в WM_PAINT
+            return 0;
         
         case WM_DESTROY:
             PostQuitMessage(0);
