@@ -2,6 +2,8 @@
 #include <random>
 
 void init_game(GameState& state) {
+    // Инициализация генератора случайных чисел
+    srand(static_cast<unsigned int>(time(nullptr)));
     reset_game(state);
 }
 

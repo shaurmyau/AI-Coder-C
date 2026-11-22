@@ -8,4 +8,5 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(${PROJECT_NAME} 
     game/main.cpp
     game/game.cpp
+    game/main_console.cpp
 )

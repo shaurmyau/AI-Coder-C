@@ -61,12 +61,17 @@ void test_collision_detection() {
     GameState state;
     init_game(state);
     
-    // Создаём стену
-    state.tiles[2][2].is_wall = true;
+    // Убедимся, что tile (2, 1) не является стеной перед тестом
+    while (state.tiles[2][1].is_wall) {
+        reset_game(state);
+    }
     
     // Игрок пытается пройти через стену
     move_player(state, 1, 0);
     assert(state.player.x == 2);
+    
+    // Создаём стену в месте, куда игрок хочет пойти
+    state.tiles[3][1].is_wall = true;
     
     move_player(state, 1, 0); // Должно не сработать
     assert(state.player.x == 2);

@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <vector>
 #include <algorithm>
+#include <ctime>
 
 // Константы игры
 constexpr int TILE_SIZE = 32;
@@ -46,7 +47,7 @@ struct GameState {
     
     // Спавн врагов каждые N кадров
     int enemySpawnTimer = 0;
-    const int ENEMY_SPAWN_INTERVAL = 180; // ~3 секунды при 60 FPS
+    static constexpr int ENEMY_SPAWN_INTERVAL = 180; // ~3 секунды при 60 FPS
 };
 
 // Предварительное объявление функции WndProc
@@ -55,3 +56,8 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 // Функции инициализации
 void init_game(GameState& state);
 void reset_game(GameState& state);
+
+// Игровые функции
+void spawn_enemies(GameState& state);
+void move_player(GameState& state, int dx, int dy);
+void update_enemies(GameState& state);

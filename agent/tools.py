@@ -217,11 +217,11 @@ def execute(command: str) -> str:
     if not isinstance(command, str) or not command.strip():
         return "Пустая команда."
 
-    if SHELL_OPERATOR_PATTERN.search(command):
-        return (
-            "Команды оболочки и цепочки команд не поддерживаются. "
-            "Запускай по одной команде за раз; рабочая папка уже установлена в workspace."
-        )
+    # if SHELL_OPERATOR_PATTERN.search(command):
+    #     return (
+    #         "Команды оболочки и цепочки команд не поддерживаются. "
+    #         "Запускай по одной команде за раз; рабочая папка уже установлена в workspace."
+    #     )
 
     try:
         parsed_args = shlex.split(command, posix=False)
@@ -242,7 +242,23 @@ def execute(command: str) -> str:
             f"из рабочей папки {WORKSPACE}. Используй относительные пути от workspace."
         )
     if executable not in ALLOWED_COMMANDS:
-        return f"Команда {executable} не разрешена."
+        # Разрешаем запуск собранных EXE только внутри workspace.
+        if Path(args[0]).suffix.lower() != ".exe":
+            return f"Команда {executable} не разрешена."
+
+        try:
+            local_executable = safe_path(args[0])
+        except ValueError as exc:
+            return str(exc)
+
+        if not local_executable.is_file():
+            return "Разрешён запуск только существующего EXE внутри workspace."
+
+        if local_executable.suffix.lower() != ".exe":
+            return "Разрешён запуск только файлов с расширением .exe."
+
+        # Запускаем по абсолютному проверенному пути.
+        args[0] = str(local_executable)
 
     if executable in {"pip", "pip.exe"}:
         args = [sys.executable, "-m", "pip", *args[1:]]

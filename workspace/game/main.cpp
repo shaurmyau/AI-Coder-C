@@ -1,6 +1,9 @@
 #include <windows.h>
 #include "game.h"
 
+// Глобальная переменная для состояния игры
+GameState globalGameState;
+
 // Регистрация классов Windows
 ATOM MyRegisterClass(HINSTANCE hInstance) {
     WNDCLASSEXW wc = {};
@@ -48,12 +51,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
     
-    // Создаём GameState и передаём его в окно
-    GameState gameState;
-    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&gameState));
+    // Инициализация игры (используем глобальную переменную)
+    init_game(globalGameState);
     
-    // Инициализация игры
-    init_game(gameState);
+    // Сохраняем указатель на глобальное состояние игры
+    SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&globalGameState));
     
     // Цикл сообщений Windows
     MSG msg;
