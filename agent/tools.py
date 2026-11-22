@@ -217,11 +217,11 @@ def execute(command: str) -> str:
     if not isinstance(command, str) or not command.strip():
         return "Пустая команда."
 
-    # if SHELL_OPERATOR_PATTERN.search(command):
-    #     return (
-    #         "Команды оболочки и цепочки команд не поддерживаются. "
-    #         "Запускай по одной команде за раз; рабочая папка уже установлена в workspace."
-    #     )
+    if SHELL_OPERATOR_PATTERN.search(command):
+        return (
+            "Команды оболочки и цепочки команд не поддерживаются. "
+            "Запускай по одной команде за раз; рабочая папка уже установлена в workspace."
+        )
 
     try:
         parsed_args = shlex.split(command, posix=False)
