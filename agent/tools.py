@@ -526,7 +526,7 @@ def run_gui(executable: str, arguments: str = "") -> str:
         startup_timeout = float(os.environ.get("AI_CODER_GUI_STARTUP_TIMEOUT", "5.0"))
         startup_timeout = max(0.2, min(startup_timeout, 10.0))
     except ValueError:
-        startup_timeout = 2.0
+        startup_timeout = 5.0
 
     try:
         return_code = process.wait(timeout=startup_timeout)
@@ -534,8 +534,8 @@ def run_gui(executable: str, arguments: str = "") -> str:
         if process.poll() is None:
             return (
                 f"GUI-процесс запущен и остаётся активным после {startup_timeout:.1f} с. "
-                f"PID: {process.pid}. Это подтверждает только жизнь процесса, "
-                "но не видимость окна и не корректность игрового поведения."
+                f"PID: {process.pid}. "
+                "Это не доказывает, что окно отображается или игра работает."
             )
         return_code = process.returncode
 
