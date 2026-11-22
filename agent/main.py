@@ -6,6 +6,7 @@ import uuid
 from time import perf_counter
 
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage
 from langchain_ollama import ChatOllama
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -21,6 +22,10 @@ MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
 BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 MAX_STEPS = int(os.getenv("MAX_AGENT_STEPS", "60"))
 NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "8192"))
+REASONING_ENABLED = os.getenv("OLLAMA_REASONING", "true").strip().lower() not in {
+    "0", "false", "no", "off",
+}
 
 logging.basicConfig(
     filename=str(LOG_DIR / "agent.log"),
@@ -37,6 +42,8 @@ def build_agent(checkpointer):
         base_url=BASE_URL,
         temperature=0.2,
         num_ctx=NUM_CTX,
+        num_predict=NUM_PREDICT,
+        reasoning=REASONING_ENABLED,
     )
     return create_agent(
         model=llm,
@@ -73,24 +80,50 @@ def print_tool_message(message) -> None:
 
 
 def _final_ai_message(messages):
-    for message in reversed(messages):
+    """Return the latest non-empty assistant answer, never an empty/tool-call message."""
+    for message in reversed(messages or []):
         if (
             getattr(message, "type", "") == "ai"
             and not getattr(message, "tool_calls", [])
+            and message_text(message).strip()
         ):
             return message
     return None
 
 
+def _latest_streamed_text(streamed_messages) -> str:
+    """Recover the last text response from streamed model chunks."""
+    for entry in reversed(list(streamed_messages.values())):
+        if entry["has_tool_calls"]:
+            continue
+        text = "".join(entry["parts"]).strip()
+        if text:
+            return text
+    return ""
+
+
 def stream_agent_response(agent, task: str, thread_id: str):
-    """Run the graph with live step/tool activity and return its final AI message."""
+    """Run the graph, retaining streamed answer text as a fallback to state updates."""
     config = {
         "configurable": {"thread_id": thread_id},
         "recursion_limit": MAX_STEPS,
     }
     collected_messages = []
+    streamed_messages = {}
     model_activity_announced = False
     model_chunks = 0
+
+    # Remember the checkpoint boundary so a missing new answer cannot reuse an old turn.
+    previous_message_count = 0
+    try:
+        previous_state = agent.get_state(config)
+        previous_values = getattr(previous_state, "values", {})
+        previous_messages = previous_values.get("messages", []) if isinstance(previous_values, dict) else []
+        if isinstance(previous_messages, list):
+            previous_message_count = len(previous_messages)
+    except Exception:
+        logging.debug("No readable checkpoint before this turn", exc_info=True)
+
     started_at = perf_counter()
 
     # The v1 tuple format is supported by LangGraph's long-standing stream API.
@@ -101,6 +134,7 @@ def stream_agent_response(agent, task: str, thread_id: str):
     ):
         if mode == "messages":
             message, metadata = chunk
+            metadata = metadata if isinstance(metadata, dict) else {}
             if metadata.get("langgraph_node") == "model":
                 model_chunks += 1
                 if not model_activity_announced:
@@ -108,6 +142,25 @@ def stream_agent_response(agent, task: str, thread_id: str):
                     model_activity_announced = True
                 elif model_chunks % 100 == 0:
                     print(f"[MODEL] Получено фрагментов: {model_chunks}", flush=True)
+
+                # Keep only public response content. With reasoning=True, Ollama places
+                # private reasoning in additional_kwargs, not in message.content.
+                message_id = getattr(message, "id", None)
+                stream_run_id = metadata.get("run_id")
+                stream_step = metadata.get("langgraph_step", "unknown")
+                stream_key = str(message_id or stream_run_id or f"model:{stream_step}")
+                entry = streamed_messages.setdefault(
+                    stream_key, {"parts": [], "has_tool_calls": False}
+                )
+                if (
+                    getattr(message, "tool_calls", [])
+                    or getattr(message, "tool_call_chunks", [])
+                ):
+                    entry["has_tool_calls"] = True
+
+                text_part = message_text(message)
+                if text_part:
+                    entry["parts"].append(text_part)
             continue
 
         if mode != "updates" or not isinstance(chunk, dict):
@@ -139,27 +192,51 @@ def stream_agent_response(agent, task: str, thread_id: str):
 
     final_message = _final_ai_message(collected_messages)
 
-    # If a compatible LangGraph version emits no final update, read the final checkpoint.
+    # If stream updates omitted the answer, inspect only messages added in this turn.
     if final_message is None:
         try:
             state = agent.get_state(config)
             values = getattr(state, "values", {})
             if isinstance(values, dict):
-                final_message = _final_ai_message(values.get("messages", []))
+                state_messages = values.get("messages", [])
+                if isinstance(state_messages, list):
+                    current_messages = state_messages[previous_message_count:]
+                    final_message = _final_ai_message(current_messages)
         except Exception:
             logging.exception("Could not read final LangGraph state")
 
+    # Some integrations emit the final text in messages mode but an empty update message.
+    if final_message is None:
+        streamed_text = _latest_streamed_text(streamed_messages)
+        if streamed_text:
+            final_message = AIMessage(content=streamed_text)
+            logging.warning(
+                "Recovered final assistant text from message stream (%d chunks)",
+                model_chunks,
+            )
+
     elapsed = perf_counter() - started_at
     if final_message is not None:
-        final_text = message_text(final_message)
+        final_text = message_text(final_message).strip()
+    else:
+        final_text = ""
+
+    if final_text:
         print("\n" + "=" * 68)
         print("AI CODER PRO RESULT")
         print("=" * 68)
-        print(final_text or "(финальное сообщение не содержит текста)")
+        print(final_text)
         logging.info("TASK COMPLETED in %.2fs", elapsed)
     else:
-        print("\n[ПРЕДУПРЕЖДЕНИЕ] Поток завершился без финального сообщения модели.")
-        logging.error("Agent stream ended without a final AI message after %.2fs", elapsed)
+        print(
+            "\n[ПРЕДУПРЕЖДЕНИЕ] Модель завершила ход без текстового ответа. "
+            "Проверь OLLAMA_NUM_PREDICT и журнал Ollama."
+        )
+        logging.error(
+            "Agent finished without a text answer: chunks=%d elapsed=%.2fs",
+            model_chunks,
+            elapsed,
+        )
 
     print(f"\n[ВРЕМЯ ВЫПОЛНЕНИЯ: {elapsed:.1f} сек.]")
     return final_message
