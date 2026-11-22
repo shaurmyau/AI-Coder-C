@@ -523,7 +523,7 @@ def run_gui(executable: str, arguments: str = "") -> str:
         return f"Не удалось запустить GUI-приложение: {exc}"
 
     try:
-        startup_timeout = float(os.environ.get("AI_CODER_GUI_STARTUP_TIMEOUT", "2.0"))
+        startup_timeout = float(os.environ.get("AI_CODER_GUI_STARTUP_TIMEOUT", "5.0"))
         startup_timeout = max(0.2, min(startup_timeout, 10.0))
     except ValueError:
         startup_timeout = 2.0
@@ -541,8 +541,9 @@ def run_gui(executable: str, arguments: str = "") -> str:
 
     unsigned_code = int(return_code) & 0xFFFFFFFF
     return (
-        f"GUI-процесс завершился через {startup_timeout:.1f} с. "
+        f"GUI-процесс завершился в пределах контрольных {startup_timeout:.1f} с. "
         f"EXIT CODE: {return_code} (0x{unsigned_code:08X}). "
+        "Код 0 сам по себе не подтверждает, что окно успело появиться. "
         "Ненулевой код означает, что запуск нельзя считать успешным."
     )
 
