@@ -111,9 +111,9 @@ def _fallback_answer(task: str, tool_messages) -> str:
         name = getattr(message, "name", "tool")
         content = message_text(message).strip()
         if content:
-            tool_reports.append(f"[{name}]\\n{content[-1800:]}")
+            tool_reports.append(f"[{name}]\n{content[-1800:]}")
 
-    evidence = "\\n\\n".join(tool_reports[-4:]) or "Инструменты не вернули результатов."
+    evidence = "\n\n".join(tool_reports[-4:]) or "Инструменты не вернули результатов."
     try:
         summarizer = ChatOllama(
             model=MODEL,
@@ -131,7 +131,7 @@ def _fallback_answer(task: str, tool_messages) -> str:
                 "не прошла. Если данных мало, прямо скажи об этом."
             )},
             {"role": "user", "content": (
-                f"Запрос пользователя: {task}\\n\\nРезультаты инструментов:\\n{evidence}"
+                f"Запрос пользователя: {task}\n\nРезультаты инструментов:\n{evidence}"
             )},
         ])
         answer = message_text(response).strip()
@@ -142,8 +142,8 @@ def _fallback_answer(task: str, tool_messages) -> str:
 
     return (
         "Модель не сформировала итоговый текстовый ответ. Я не буду объявлять задачу "
-        "выполненной без подтверждения.\\n\\n"
-        f"Запрос: {task}\\n\\nПоследние результаты инструментов:\\n{evidence}\\n\\n"
+        "выполненной без подтверждения.\n\n"
+        f"Запрос: {task}\n\nПоследние результаты инструментов:\n{evidence}\n\n"
         "Проверь указанные ошибки и повтори запрос после исправления причины."
     )
 
@@ -273,7 +273,7 @@ def stream_agent_response(agent, task: str, thread_id: str):
 
     elapsed = perf_counter() - started_at
     final_text = message_text(final_message).strip()
-    print("\\n" + "=" * 68)
+    print("\n" + "=" * 68)
     print("AI CODER PRO RESULT")
     print("=" * 68)
     print(final_text)
