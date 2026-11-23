@@ -22,8 +22,8 @@ MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:9b")
 BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 MAX_STEPS = int(os.getenv("MAX_AGENT_STEPS", "60"))
 NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
-NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "8192"))
-REASONING_ENABLED = os.getenv("OLLAMA_REASONING", "true").strip().lower() not in {
+NUM_PREDICT = int(os.getenv("OLLAMA_NUM_PREDICT", "4096"))
+REASONING_ENABLED = os.getenv("OLLAMA_REASONING", "false").strip().lower() not in {
     "0", "false", "no", "off",
 }
 
@@ -100,6 +100,52 @@ def _latest_streamed_text(streamed_messages) -> str:
         if text:
             return text
     return ""
+
+
+def _fallback_answer(task: str, tool_messages) -> str:
+    """Try a short non-reasoning summary, then always return a useful status."""
+    tool_reports = []
+    for message in tool_messages or []:
+        if getattr(message, "type", "") != "tool":
+            continue
+        name = getattr(message, "name", "tool")
+        content = message_text(message).strip()
+        if content:
+            tool_reports.append(f"[{name}]\n{content[-1800:]}")
+
+    evidence = "\n\n".join(tool_reports[-4:]) or "Инструменты не вернули результатов."
+    try:
+        summarizer = ChatOllama(
+            model=MODEL,
+            base_url=BASE_URL,
+            temperature=0.1,
+            num_ctx=min(NUM_CTX, 8192),
+            num_predict=min(NUM_PREDICT, 1024),
+            reasoning=False,
+        )
+        response = summarizer.invoke([
+            {"role": "system", "content": (
+                "Ты формируешь короткий итог работы программного агента. "
+                "Отвечай по-русски, только подтверждёнными фактами из результатов "
+                "инструментов. Не утверждай, что задача выполнена, если проверка "
+                "не прошла. Если данных мало, прямо скажи об этом."
+            )},
+            {"role": "user", "content": (
+                f"Запрос пользователя: {task}\n\nРезультаты инструментов:\n{evidence}"
+            )},
+        ])
+        answer = message_text(response).strip()
+        if answer:
+            return answer
+    except Exception:
+        logging.exception("Fallback answer generation failed")
+
+    return (
+        "Модель не сформировала итоговый текстовый ответ. Я не буду объявлять задачу "
+        "выполненной без подтверждения.\n\n"
+        f"Запрос: {task}\n\nПоследние результаты инструментов:\n{evidence}\n\n"
+        "Проверь указанные ошибки и повтори запрос после исправления причины."
+    )
 
 
 def stream_agent_response(agent, task: str, thread_id: str):
@@ -192,7 +238,7 @@ def stream_agent_response(agent, task: str, thread_id: str):
 
     final_message = _final_ai_message(collected_messages)
 
-    # If stream updates omitted the answer, inspect only messages added in this turn.
+    state_messages_for_fallback = []
     if final_message is None:
         try:
             state = agent.get_state(config)
@@ -200,8 +246,8 @@ def stream_agent_response(agent, task: str, thread_id: str):
             if isinstance(values, dict):
                 state_messages = values.get("messages", [])
                 if isinstance(state_messages, list):
-                    current_messages = state_messages[previous_message_count:]
-                    final_message = _final_ai_message(current_messages)
+                    state_messages_for_fallback = state_messages[previous_message_count:]
+                    final_message = _final_ai_message(state_messages_for_fallback)
         except Exception:
             logging.exception("Could not read final LangGraph state")
 
@@ -215,28 +261,23 @@ def stream_agent_response(agent, task: str, thread_id: str):
                 model_chunks,
             )
 
-    elapsed = perf_counter() - started_at
-    if final_message is not None:
-        final_text = message_text(final_message).strip()
-    else:
-        final_text = ""
-
-    if final_text:
-        print("\n" + "=" * 68)
-        print("AI CODER PRO RESULT")
-        print("=" * 68)
-        print(final_text)
-        logging.info("TASK COMPLETED in %.2fs", elapsed)
-    else:
-        print(
-            "\n[ПРЕДУПРЕЖДЕНИЕ] Модель завершила ход без текстового ответа. "
-            "Проверь OLLAMA_NUM_PREDICT и журнал Ollama."
-        )
+    if final_message is None or not message_text(final_message).strip():
+        fallback_messages = collected_messages or state_messages_for_fallback
+        final_message = AIMessage(content=_fallback_answer(task, fallback_messages))
         logging.error(
-            "Agent finished without a text answer: chunks=%d elapsed=%.2fs",
+            "Primary model turn had no final text; emitted fallback answer. "
+            "chunks=%d elapsed=%.2fs",
             model_chunks,
-            elapsed,
+            perf_counter() - started_at,
         )
+
+    elapsed = perf_counter() - started_at
+    final_text = message_text(final_message).strip()
+    print("\n" + "=" * 68)
+    print("AI CODER PRO RESULT")
+    print("=" * 68)
+    print(final_text)
+    logging.info("TASK TURN FINISHED in %.2fs", elapsed)
 
     print(f"\n[ВРЕМЯ ВЫПОЛНЕНИЯ: {elapsed:.1f} сек.]")
     return final_message
