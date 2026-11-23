@@ -29,7 +29,7 @@ def test_fallback_answer_uses_short_non_reasoning_summary(monkeypatch):
     tool_message = SimpleNamespace(
         type="tool",
         name="build_cpp_project",
-        content="EXIT CODE: 1\\nerror C2731: WinMain",
+        content="EXIT CODE: 1\nerror C2731: WinMain",
     )
 
     answer = main._fallback_answer("Исправь игру", [tool_message])
@@ -52,7 +52,7 @@ def test_fallback_answer_is_nonempty_if_model_summary_fails(monkeypatch):
     tool_message = SimpleNamespace(
         type="tool",
         name="run_tests",
-        content="EXIT CODE: 5\\nno tests collected",
+        content="EXIT CODE: 5\nno tests collected",
     )
 
     answer = main._fallback_answer("Запусти тесты", [tool_message])
